@@ -164,154 +164,46 @@ aggregated.peak.fpkm <-
        gene.length = peak.counts$Length)
 
 
-keep.fuzzy.clustering <- rowSums(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm > 10) >= 1
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.kept <- hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm[keep.fuzzy.clustering, ]
+aggregated.keep <- rowSums(aggregated.peak.fpkm > 10) >= 1
 
-comparelists(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm[test, ] %>% rownames(),
-             hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.kept %>% rownames()
-)
+aggregated.peak.fpkm <- aggregated.peak.fpkm[aggregated.keep, ]
+aggregated.peak.fpkm <- log2(aggregated.peak.fpkm + 1)
+aggregated.peak.fpkm <- normalizeQuantiles(aggregated.peak.fpkm)
 
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2 <- log2(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.kept + 1)
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm <- normalizeQuantiles(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2)
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm %>% head()
-
-plotMDS(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm,
-        top = 300000, gene.selection = "common")
-
-plotMDS(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm,
-        top = 200000,
-        gene.selection = "common",
-        col = c(rep("darkgrey", 3), rep("#FF8D03", 4), rep("#2302FE", 4))
-)
-
-save(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.Rdata")
-```
 ### Discard low coefficient of variation peaks.
 
-```{r low CV peaks}
+cv.20 <- apply(aggregated.peak.fpkm, 1, function(x) cv(x) * 100) > 20
+cv.20 %>% table()
 
-# apply( rpkmDFeByg_rpkm10removed_quantile, 1, function( x) { sd( x, na.rm = TRUE) / mean( x, na.rm = TRUE) * 100 }) < 10
-
-cv(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[1,])
-
-sd(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[1, ], na.rm = T)/ mean(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[1, ], na.rm = TRUE) 
-
-apply(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm, 1, function(x) cv(x)) %>% summary()
-
-loci.cv <- apply(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm, 1, function(x) cv(x) * 100) %>% as.data.frame()
-
-loci.cv$Peak_id <- rownames(loci.cv)
-
-cv.index.20 <- apply(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm, 1, function(x) cv(x) * 100) < 20
-cv.index.20 %>% table()
-
-
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.high.cv <-
-  hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[!cv.index.20,]
-
-save(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.high.cv,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.high.cv.Rdata")  
-
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv <-
-  hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[cv.index.20,]
-
-
-sample(rownames(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.high.cv), size = 10)
-
-plot(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm["consensus_peak_17167", ], type = "l",
-     ylim = c(0, 5))
-
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv <- hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm[cv.index.20, ]
-
-save(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv.cv.Rdata")  
-sample(rownames(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv), size = 10)
-plot(hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm["consensus_peak_16869", ], type = "l",
-     ylim = c(0, 5))
-
-```
-# Export table of closest peak to TSS RPKMs
-Inner join based on Fuzzy clusters where low CV peaks were discarded.
-```{r}
-
-hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table <- as.data.frame(hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm)
-hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table$PeakID <- rownames(hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table)
-
-hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table.tss <-
-  dplyr::inner_join(
-    hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table,
-    homer.annotated.clusters.details.table.nearest.TSS,
-    by = "PeakID"
-  )
-
-write.table(
-  hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table.tss,
-  file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/hg19.atac.seq.intersect.biol.rep.rpkm.log2.qnorm.table.tss.tsv",
-  quote = F,
-  row.names = F,
-  sep = "\t"
-)
-```
+aggregated.peak.fpkm.high.cv <- aggregated.peak.fpkm[cv.20, ]
 
 ### Fuzzy clustering
-```{r fuzzy clustering}
 
-exprSet.high.cv <- ExpressionSet(assayData = hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.high.cv)
+exprSet <- ExpressionSet(assayData = aggregated.peak.fpkm.high.cv)
 
-save(exprSet.high.cv,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/exprSet.high.cv.Rdata")
+s.exprSet <- standardise(exprSet)
 
-s.exprSet.high.cv <- standardise(exprSet.high.cv)
-
-save(s.exprSet.high.cv,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/s.exprSet.high.cv.Rdata")
-
-
-s.exprSet.high.cv@assayData$exprs %>% head() %>% rowSums()
-
-m <- mestimate(s.exprSet.high.cv)
-
+m <- mestimate(s.exprSet)
 
 set.seed(1234)
+cl.s.exprSet <- mfuzz(s.exprSet, c = 8, m = m)
 
-cl.s.exprSet.high.cv <- mfuzz(s.exprSet.high.cv, c = 8, m = m, verbose = T)
-
-save(cl.s.exprSet.high.cv,
-     file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/objects/cl.s.exprSet.high.cv.Rdata")
-
-mfuzz.plot2(s.exprSet.high.cv,
-            cl = cl.s.exprSet.high.cv,
-            # mfrow = c(3,6),
-            single = 6,
-            min.mem = 0.8,
-            # time.labels =  colnames(s.exprSet.fib.prime.rpkm.qnorm.mean),
-            x11 = F,
-            xlab = "Stages",
-            ylab = "Standardized GE",
-            # colo = "fancy",
-            centre = T,
-            centre.col = c("#2302FE"),
-            centre.lwd = 2.5
-)
-```
 #### Filter high affinity peaks and annotate
-```{r}
-hg19.atac.seq.intersect.biol.rep.peak.details <- hg19.atac.seq.intersect.biol.rep.peak.counts[, 1:6]
-colnames(hg19.atac.seq.intersect.biol.rep.peak.details)[1] <- "PeakID"
 
-core.exprSet.high.cv <- acore(s.exprSet.high.cv,
-                              cl = cl.s.exprSet.high.cv,
-                              min.acore = 0.8)
-gene.counts.core.exprSet.high.cv <- lapply(core.exprSet.high.cv, nrow) %>%
+core.exprSet <- acore(s.exprSet,
+                      cl = cl.s.exprSet,
+                      min.acore = 0.8)
+
+core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
   unlist() %>% as.data.frame() %>% 
   mutate(Cluster = c(1:8))
-colnames(gene.counts.core.exprSet.high.cv)[1] <- "members"
 
-gene.counts.core.exprSet.high.cv
+colnames(core.exprSet.cluster.counts)[1] <- "members"
 
-cl.s.exprSet.high.cv.peak.ids <- as.data.frame(cl.s.exprSet.high.cv$cluster) %>% 
-  dplyr::mutate(PeakID = rownames(.))
+
+core.exprSet.peaks.ids <- sapply(c(1:8), function(x) as.vector(core.exprSet[[x]]$NAME)
+)
+
 
 colnames(cl.s.exprSet.high.cv.peak.ids)[1] <- "Cluster"
 s.exprSet.high.cv.ann <- as.data.frame(s.exprSet.high.cv@assayData$exprs) %>% 
@@ -323,8 +215,6 @@ cl.s.exprSet.high.cv.ann <- dplyr::inner_join(s.exprSet.high.cv.ann,
 
 
 
-high.cluster.affinity.peak.ids <- sapply(c(1:8), function(x) as.vector(core.exprSet.high.cv[[x]]$NAME)
-)
 
 high.cluster.affinity.peak.ids <- as.character(unlist(high.cluster.affinity.peak.ids))
 
