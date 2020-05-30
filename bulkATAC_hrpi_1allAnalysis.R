@@ -188,11 +188,19 @@ m <- mestimate(s.exprSet)
 set.seed(1234)
 cl.s.exprSet <- mfuzz(s.exprSet, c = 8, m = m)
 
+# Retrieve peak cluster membership
+
+peak.cluster.membership <- as.data.frame(cl.s.exprSet$cluster) %>% 
+  dplyr::mutate(PeakID = rownames(.))
+colnames(peak.cluster.membership)[1] <- "Cluster"
+
 #### Filter high affinity peaks and annotate
 
 core.exprSet <- acore(s.exprSet,
                       cl = cl.s.exprSet,
                       min.acore = 0.8)
+
+# High affinity cluster membership counts
 
 core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
   unlist() %>% as.data.frame() %>% 
@@ -200,143 +208,26 @@ core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
 
 colnames(core.exprSet.cluster.counts)[1] <- "members"
 
-
-core.exprSet.peaks.ids <- sapply(c(1:8), function(x) as.vector(core.exprSet[[x]]$NAME)
+# Peak ids of high affinity peaks
+core.exprSet.peaks.id <- sapply(c(1:8), function(x) as.vector(core.exprSet[[x]]$NAME)
 )
+core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
 
+# Peak z-scores
 
-colnames(cl.s.exprSet.high.cv.peak.ids)[1] <- "Cluster"
-s.exprSet.high.cv.ann <- as.data.frame(s.exprSet.high.cv@assayData$exprs) %>% 
+peak.z.scores <- as.data.frame(s.exprSet@assayData$exprs) %>% 
   dplyr::mutate(., PeakID = rownames(.))
 
-cl.s.exprSet.high.cv.ann <- dplyr::inner_join(s.exprSet.high.cv.ann,
-                                              cl.s.exprSet.high.cv.peak.ids,
-                                              by = "PeakID")
+# Create a table of high cluster affinity peak containing z-scores and peak details.
+
+high.affinity.peaks.annotated <- dplyr::left_join(peak.z.scores,
+                                                  peak.cluster.membership,
+                                                  by = "PeakID") %>%
+  dplyr::left_join(peak.counts[, 1:6], by = "PeakID") %>%
+  dplyr::filter(PeakID %in% core.exprSet.peaks.id)
 
 
-
-
-high.cluster.affinity.peak.ids <- as.character(unlist(high.cluster.affinity.peak.ids))
-
-cl.s.exprSet.high.cv.high.affinity.peaks.ann <- dplyr::filter(cl.s.exprSet.high.cv.ann,
-                                                              PeakID %in% high.cluster.affinity.peak.ids)
-
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.homer <- dplyr::inner_join(cl.s.exprSet.high.cv.high.affinity.peaks.ann,
-                                                                        hg19.atac.seq.intersect.biol.rep.peak.details, by = "PeakID")
-
-comparelists(core.exprSet.high.cv[[2]]$NAME,
-             filter(cl.s.exprSet.high.cv.high.affinity.peaks.ann, Cluster == 2)$PeakID)
-
-
-lapply(c(1:8), 
-       function(x) write.table(dplyr::filter(cl.s.exprSet.high.cv.high.affinity.peaks.ann.homer, Cluster == x), 
-                               file = paste("~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/fuzzy_clustering/combined_sets/", "high_affinity_peaks_cluster_",x,".tsv",sep=""), 
-                               append=F,
-                               quote=F,
-                               sep="\t", 
-                               col.names=T,
-                               row.names=F, 
-                               eol="\n")
-)
-### Stable cluster
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.homer <- dplyr::inner_join(cl.s.exprSet.high.cv.high.affinity.peaks.ann,
-                                                                        hg19.atac.seq.intersect.biol.rep.peak.details, by = "PeakID")
-
-```
-#### Stable cluster processing.
-```{r stable cluster processing}
-hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv
-
-exprSet.low.cv <- ExpressionSet(assayData = hg19.atac.seq.intersect.biol.rep.sum.peak.counts.rpkm.log2.qnorm.low.cv)
-
-s.exprSet.low.cv <- standardise(exprSet.low.cv)
-s.exprSet.low.cv.ann <- as.data.frame(s.exprSet.low.cv@assayData$exprs)
-s.exprSet.low.cv.ann$PeakID <- rownames(s.exprSet.low.cv.ann)
-s.exprSet.low.cv.ann.melt <- melt(s.exprSet.low.cv.ann, id = "PeakID")
-### ADD MUTATE IFELSE FOR MEDIA AND STAGE POST MELT
-
-
-s.exprSet.low.cv.ann.melt <-
-  s.exprSet.low.cv.ann.melt %>% mutate(stage = ifelse(variable == "D0", "D0", ifelse(
-    variable == "D3", "D3", ifelse(
-      variable == "D7",
-      "D7",
-      ifelse(
-        variable == "D13_Primed" |
-          variable == "D13_Smith",
-        "D13",
-        ifelse(
-          variable == "D21_Primed" |
-            variable == "D21_Smith",
-          "D21",
-          ifelse(variable == "P3_Primed" |
-                   variable == "P3_Smith", "P3", "P10")
-        )
-      )
-    )
-  )))
-
-s.exprSet.low.cv.ann.melt <- s.exprSet.low.cv.ann.melt %>%
-  mutate(media = case_when(
-    grepl("D0|D3|D7", variable) ~ "FM",
-    grepl("Smith", variable) ~ "NM",
-    grepl("Primed", variable) ~ "PM"
-  ))
-
-s.exprSet.low.cv.ann.melt$stage <-
-  factor(s.exprSet.low.cv.ann.melt$stage,
-         levels = c("D0", "D3", "D7", "D13", "D21", "P3", "P10"))
-s.exprSet.low.cv.ann %>% dim()
-
-ggplot(data = s.exprSet.low.cv.ann.melt %>% filter(media %in% c("FM", "NM")), 
-       aes(stage, value, group = PeakID, colour = media)) +
-  geom_line(alpha = 1/500) +
-  stat_summary(aes(group = 1), fun.y = mean,   geom = "line",size = 0.75, color = "black") +
-  stat_summary(aes(group = 1), fun.y = mean,   geom = "point",size = 2) +
-  geom_line(data = s.exprSet.low.cv.ann.melt %>% filter(media %in% c("FM", "NM")),
-            alpha = 1/500) +
-  stat_summary(data = s.exprSet.low.cv.ann.melt %>% filter(media %in% c("FM", "PM")),
-               aes(group = 1), fun.y = mean,   geom = "line", color = "black", size = 0.75) +
-  stat_summary(data = s.exprSet.low.cv.ann.melt %>% filter(media %in% c("FM", "PM")),
-               aes(group = 1), fun.y = mean,   geom = "point",size = 2) +
-  scale_color_manual(values = c("FM" = "black", "NM" = "#2302FE", "PM" = "#FF8D03"), name = "Culture Media") +
-  ylab("Gene expression (z-score)") +
-  xlab("Reprogramming stages") +
-  ylim(c(-3, 3)) +
-  # ggtitle("Fuzzy clustering")  +
-  geom_text(data = NULL, aes(x = 1, y = 3, label=paste("n = ", "26361")),colour="black", inherit.aes=FALSE, parse=FALSE, size = 3, fontface = "bold") +
-  gplot.theme
-
-ggsave("~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/fuzzy_clustering/fuzzy_clusters_combined_sets.pdf", height = 20, width = 25, units = "cm", dpi = 150, scale = 1)
-
-```
-##### Export annotated stable clustering for Homer processing.
-```{r}
-s.exprSet.low.cv.ann$Cluster <- 9
-s.exprSet.low.cv.ann.homer <- dplyr::inner_join(s.exprSet.low.cv.ann,
-                                                hg19.atac.seq.intersect.biol.rep.peak.details,
-                                                by = "PeakID")
-lapply(c(9), 
-       function(x) write.table(dplyr::filter(s.exprSet.low.cv.ann.homer, Cluster == x), 
-                               file = paste("~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/fuzzy_clustering/combined_sets/", "high_affinity_peaks_cluster_",x,".tsv",sep=""), 
-                               append=F,
-                               quote=F,
-                               sep="\t", 
-                               col.names=T,
-                               row.names=F, 
-                               eol="\n")
-)
-```
-
-### Combine high CV and stable cluster HOMER objects
-```{r high cv plus stable}
-head(s.exprSet.low.cv.ann.homer) %>% dim()
-head(cl.s.exprSet.high.cv.high.affinity.peaks.ann.homer)
-cl.s.exprSet.high.cv.high.affinity.stable.peaks.ann.homer <-
-  dplyr::bind_rows(cl.s.exprSet.high.cv.high.affinity.peaks.ann.homer,
-                   s.exprSet.low.cv.ann.homer)
-
-```
+### LAST MODIFIED 30/05 use innerjoin!
 
 ## Integrate annotated peaks with cluster information.
 
@@ -362,7 +253,7 @@ colnames(homer.annotated.gene.by.atac.seq.cluster)[1] <- "Ensembl_id"
 homer.annotated.clusters.details.table <- ldply(homer.annotated.clusters.details, rbind) %>% filter(!Nearest.Ensembl == "" ) %>% .[, -1]
 
 homer.annotated.gene.by.atac.seq.changing.cluster <- homer.annotated.gene.by.atac.seq.cluster %>% filter(Cluster != 9)
-homer.annotated.changing.clusters.details.table <- homer.annotated.clusters.details.table %>% filter(Cluster != 9)
+
 
 ```
 ## Subset annotated peaks closes to the nearest TSS
