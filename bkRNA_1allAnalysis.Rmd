@@ -1,0 +1,372 @@
+---
+title: | 
+  | Script for analysing bulk RNA-seq of reprogramming intermediates
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "bkRNA"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(irlba)
+library(plot3D)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(pheatmap)
+library(RColorBrewer)
+library(edgeR)
+library(fgsea)
+```
+
+### Define colour palettes and gene signatures
+```{r define}
+colorMedia = c("black","darkorange","blue","darkolivegreen2","red2","pink2")
+names(colorMedia) = c("Fibroblast","Primed","t2iLGoY","5iLAF","NHSM","RSeT")
+shapeTime = c(0,1,2,15,16,17,18)
+names(shapeTime) = c("D0","D3","D7","D13","D21","P3","P10")
+geneSig = fread("data/geneSignatures_suppTable03.tab")
+geneSigPet = fread("data/petSignatures_suppTable12.tab")
+```
+
+# IO and library normalization
+### Read in coldata and factor
+```{r io}
+bkRNAcolData = fread("data/bkRNA_colData_suppTable05.tab")
+bkRNAcolData$media = factor(bkRNAcolData$media, 
+                            levels = c("Fibroblast", "Primed", "t2iLGoY", 
+                                       "5iLAF", "NHSM", "RSeT"))
+bkRNAcolData$time = factor(bkRNAcolData$time,
+                           levels = unique(bkRNAcolData$time))
+bkRNAcolData$group = paste0(bkRNAcolData$media, "-", bkRNAcolData$time)
+bkRNAcolData$group = factor(bkRNAcolData$group,
+                            levels = unique(bkRNAcolData$group))
+```
+
+### Read in raw counts
+```{r ioRaw}
+bkRNArawCts  = fread("data/bkRNA_rawCts.tab.gz")
+bkRNArawMat  = as.matrix(bkRNArawCts[, -c(1:3)])
+rownames(bkRNArawMat) = bkRNArawCts$geneName
+```
+
+### Calculate log2FPKM
+```{r log2FPKM}
+dge = DGEList(bkRNArawMat, genes = rownames(bkRNArawMat))
+dge$genes$Length = bkRNArawCts$geneLen
+dge = calcNormFactors(dge)
+bkRNAlogFPKM = rpkm(dge, normalized.lib.sizes = TRUE, log = FALSE)
+bkRNAlogFPKM = log2(bkRNAlogFPKM + 1)
+```
+
+# PCA
+### Compute PCA
+```{r pca}
+hvg = rowSums((bkRNAlogFPKM - rowMeans(bkRNAlogFPKM))^2)/(nrow(bkRNAlogFPKM)-1)
+hvg = order(hvg, decreasing = TRUE)[1:500]
+set.seed(42)
+oupPCA = prcomp_irlba(t(bkRNAlogFPKM[hvg,]))
+all.equal(oupPCA$x[,1], bkRNAcolData$ALL_PC1_371)
+```
+
+### Plot 3D PCA
+```{r 3dPCA}
+ggPCs = c("ALL_PC1_371", "ALL_PC2_273", "ALL_PC3_135")
+ggData = bkRNAcolData[, c("media", "time", "group", ggPCs), with = FALSE]
+ggData$media = colorMedia[ggData$media]
+ggData$time = shapeTime[ggData$time]
+ggCen = matrix(0, nrow = uniqueN(ggData$group), ncol = 3) # Centroid for spline
+rownames(ggCen) = unique(ggData$group)
+for(i in unique(ggData$group)){
+  ggCen[i,] = colMeans(ggData[group == i][, ggPCs, with = FALSE])
+}
+ggSpline = (ggCen[c(1:11),] + ggCen[c(1:3,16:23),]) / 2
+ggSpline = data.table(
+  fmX = splinefun(1:3, ggSpline[1:3,1])(seq(1,3,length.out = 100)),
+  fmY = splinefun(1:3, ggSpline[1:3,2])(seq(1,3,length.out = 100)),
+  fmZ = splinefun(1:3, ggSpline[1:3,3])(seq(1,3,length.out = 100)),
+  prX = splinefun(1:5, ggSpline[3:7,1])(seq(1,5,length.out = 100)),
+  prY = splinefun(1:5, ggSpline[3:7,2])(seq(1,5,length.out = 100)),
+  prZ = splinefun(1:5, ggSpline[3:7,3])(seq(1,5,length.out = 100)),
+  nrX = splinefun(1:5, ggSpline[c(3,8:11),1])(seq(1,5,length.out = 100)),
+  nrY = splinefun(1:5, ggSpline[c(3,8:11),2])(seq(1,5,length.out = 100)),
+  nrZ = splinefun(1:5, ggSpline[c(3,8:11),3])(seq(1,5,length.out = 100)))
+scatter3D(ggData$ALL_PC1_371, ggData$ALL_PC2_273, ggData$ALL_PC3_135, 
+          xlab = "PC1", ylab = "PC2", zlab = "PC3", colvar = NULL, 
+          col = ggData$media, pch = ggData$time)
+scatter3D(ggSpline$fmX, ggSpline$fmY, ggSpline$fmZ, type = "l", 
+          ticktype = "detailed", lwd = 1.5, add = TRUE, colvar = NULL)
+scatter3D(ggSpline$prX, ggSpline$prY, ggSpline$prZ, type = "l",
+          ticktype = "detailed", lwd = 1.5, add = TRUE, col = "darkorange")
+scatter3D(ggSpline$nrX, ggSpline$nrY, ggSpline$nrZ, type = "l",
+          ticktype = "detailed", lwd = 1.5, add = TRUE, col = "blue")
+text3D(ggCen[,1], ggCen[,2], ggCen[,3], colvar = NULL, 
+       labels = tstrsplit(rownames(ggCen), "-")[[2]], add = TRUE)
+```
+
+# Integrated PCA with ATAC
+### IO ATAC and merge datasets
+```{r ioATAC}
+bkATACtss = fread("data/bkATACtss.tab.gz")
+tmp2 = as.matrix(bkATACtss[, -c(1:4)])
+rownames(tmp2) = bkATACtss$geneName
+commonGenes = intersect(rownames(tmp2), rownames(bkRNAlogFPKM))
+tmp2 = tmp2[commonGenes, ] 
+mergeLogFPKM = bkRNAcolData[media %in% c("Fibroblast", "Primed", "t2iLGoY")]
+tmp1 = bkRNAlogFPKM[commonGenes, mergeLogFPKM$sampleID]
+colnames(tmp1) = mergeLogFPKM$label
+mergeLogFPKM = cbind(tmp1, tmp2)
+```
+
+### Create corresponding colData
+```{r atacCol}
+mergeColData = data.table(sampleID = colnames(mergeLogFPKM),
+                          assay = c(rep("RNA",26), rep("ATAC",22)))
+mergeColData$media = tstrsplit(mergeColData$sampleID, "-")[[1]]
+mergeColData$time = tstrsplit(mergeColData$sampleID, "-|_")[[2]]
+mergeColData$media = factor(mergeColData$media, 
+                            levels = c("Fibroblast", "Primed", "t2iLGoY"))
+mergeColData$time = factor(mergeColData$time,
+                           levels = unique(mergeColData$time))
+```
+
+### Integrate bulk RNA with bulk ATAC
+```{r intATAC}
+mergeColData$rmBatch = "nil"
+mergeColData[media == "Fibroblast" & time == "D0"]$rmBatch = "FM"
+mergeColData[media == "Primed" & time == "P10"]$rmBatch = "PR"
+mergeColData[media == "t2iLGoY" & time == "P10"]$rmBatch = "NR"
+mergeColData$rmBatch = factor(mergeColData$rmBatch, 
+                              levels = c("nil", "FM", "PR", "NR"))
+design = model.matrix(~ 0 + mergeColData$rmBatch)
+mergeLogFPKM = removeBatchEffect(mergeLogFPKM, batch = mergeColData$assay, 
+                                 design = design)
+```
+
+### Compute PCA
+```{r atacPCA}
+hvg = rowSums((mergeLogFPKM - rowMeans(mergeLogFPKM))^2)/(nrow(mergeLogFPKM)-1)
+hvg = order(hvg, decreasing = TRUE)[1:1000]
+set.seed(42)
+oupPCA = prcomp_irlba(t(mergeLogFPKM[hvg,]))
+```
+
+### Plot PCA
+```{r plotATACPCA}
+mergeColData$PC1 = oupPCA$x[,1]
+mergeColData$PC2 = oupPCA$x[,2]
+ggplot(mergeColData, aes(PC1, PC2, color=media, shape=assay, label=time)) +
+  geom_point(size = 3) + geom_text_repel(size = 5) + 
+  scale_color_manual(values = colorMedia[1:3]) +
+  scale_shape_manual(values = c(16,15)) + theme_classic(base_size = 24)
+```
+
+# Gene trends / heatmaps
+### Aggregate gene expression across conditions
+```{r aggr}
+bkPoolLogFPKM = matrix(0, nrow = nrow(bkRNAlogFPKM), 
+                       ncol = uniqueN(bkRNAcolData$group))
+colnames(bkPoolLogFPKM) = unique(bkRNAcolData$group)
+rownames(bkPoolLogFPKM) = rownames(bkRNAlogFPKM)
+for(i in colnames(bkPoolLogFPKM)){
+  bkPoolLogFPKM[,i] = rowMeans(
+    2 ^ bkRNAlogFPKM[, bkRNAcolData[group == i]$sampleID] - 1)
+}
+bkPoolLogFPKM = log2(bkPoolLogFPKM + 1)
+bkPoolColData = data.table(sampleID = colnames(bkPoolLogFPKM))
+bkPoolColData$media = tstrsplit(bkPoolColData$sampleID, "-")[[1]]
+bkPoolColData$time  = tstrsplit(bkPoolColData$sampleID, "-")[[2]]
+bkPoolColData$media = factor(bkPoolColData$media, 
+                             levels = c("Fibroblast", "Primed", "t2iLGoY",
+                                        "5iLAF", "NHSM", "RSeT"))
+bkPoolColData$time = factor(bkPoolColData$time,
+                            levels = unique(mergeColData$time))
+```
+
+### Gene trend plots
+```{r geneTrend, fig.height=3}
+ggData = bkPoolColData[media %in% c("Fibroblast", "Primed", "t2iLGoY")]
+ggData$TFAP2C = bkPoolLogFPKM["TFAP2C", ggData$sampleID]
+ggData$GATA2 = bkPoolLogFPKM["GATA2", ggData$sampleID]
+tmp1 = ggData[time == "D7"]; tmp1$media = "Primed"
+tmp2 = ggData[time == "D7"]; tmp2$media = "t2iLGoY"
+ggData = rbindlist(list(ggData, tmp1, tmp2))
+p1 = ggplot(ggData, aes(time, TFAP2C, color = media, group = media)) +
+  geom_line(size = 1) + geom_point(size = 3) +
+  scale_color_manual(values = colorMedia[1:3]) +
+  theme_classic(base_size = 16) + theme(legend.position = "none")
+p2 = ggplot(ggData, aes(time, GATA2, color = media, group = media)) +
+  geom_line(size = 1) + geom_point(size = 3) +
+  scale_color_manual(values = colorMedia[1:3]) +
+  theme_classic(base_size = 16) + theme(legend.position = "none")
+p1 + p2
+```
+
+### Heatmap
+```{r heatmap, fig.height=10}
+geneSig = geneSig[module %in% c("naive", "primed")]
+geneSig = geneSig[geneName %in% rownames(bkPoolLogFPKM)]
+geneSig$module = factor(geneSig$module, levels = c("primed", "naive"))
+ggRow = data.frame(module = geneSig$module)
+rownames(ggRow) = geneSig$geneName
+ggCol = data.frame(media = bkPoolColData$media)
+rownames(ggCol) = bkPoolColData$sampleID
+
+pheatmap(bkPoolLogFPKM[geneSig$geneName, bkPoolColData[order(media)]$sampleID], 
+         color = colorRampPalette(rev(brewer.pal(n=9, name="RdYlBu")))(100), 
+         breaks = seq(-2.5, 2.5, length.out = 101), cutree_rows = 2, 
+         cluster_cols = FALSE, clustering_method = "ward.D2",
+         annotation_row = ggRow, annotation_col = ggCol,
+         annotation_colors = list(
+           module = c(primed = "darkorange", naive = "blue"),
+           media = colorMedia), scale = "row")
+```
+
+# Signature scoring
+### Load scoring function
+```{r geneS}
+geneScoreBk <- function(geneExpr, genes){
+  genes = genes[genes %in% rownames(geneExpr)]
+  oupScores = as.matrix(geneExpr[genes,])
+  sMax = do.call(pmax, data.frame(oupScores))
+  sMin = do.call(pmin, data.frame(oupScores))
+  sRan = sMax - sMin    # gene expression range
+  oupScores = oupScores - sMin
+  oupScores = oupScores / sRan
+  oupScores = colMeans(oupScores)
+  names(oupScores) = colnames(geneExpr)
+  return(oupScores)
+}
+```
+
+### Score primed/naive and TE/EPI/PE signature
+```{r geneSig}
+bkPoolColData$primed = geneScoreBk(bkPoolLogFPKM, 
+                                   geneSig[module == "primed"]$geneName)
+bkPoolColData$naive  = geneScoreBk(bkPoolLogFPKM, 
+                                   geneSig[module == "naive"]$geneName)
+bkPoolColData$TE  = geneScoreBk(bkPoolLogFPKM, 
+                                geneSigPet[type == "ALL-TE"]$geneName)
+bkPoolColData$EPI = geneScoreBk(bkPoolLogFPKM, 
+                                geneSigPet[type == "ALL-EPI"]$geneName)
+bkPoolColData$PE  = geneScoreBk(bkPoolLogFPKM, 
+                                geneSigPet[type == "ALL-PE"]$geneName)
+```
+
+### Plot both primed/naive scores together
+```{r geneSigPlt, fig.height=4}
+ggData = melt.data.table(bkPoolColData[, c("media","time","primed","naive")], 
+                         id.vars = c("media","time"),
+                         variable.name = "type", value.name = "score")
+ggData$type = factor(ggData$type, levels = c("naive", "primed"))
+ggData[type == "primed"]$score = - ggData[type == "primed"]$score
+ggplot(ggData, aes(time, media, color = score, shape = type)) +
+  geom_point(size = 12) + scale_colour_gradientn(
+    colours = c(rep("darkorange",2), "#FFE8CC", rep("grey90",2), 
+                "#CDCCFF", rep("blue",2)), limits = c(-1, 1),
+    values = c(0, 0.1, 0.275, 0.45, 0.55, 0.725, 0.9, 1.0),
+    breaks = c(-1, -0.2, 0, 0.2, 1)) +
+  scale_shape_manual(values=c("\u25E4","\u25E2")) + 
+  theme_classic(base_size = 16)
+```
+
+### Plot single TE score
+```{r geneSigTE, fig.height=4}
+ggplot(bkPoolColData, aes(time, media, color = TE)) +
+  geom_point(size = 14, shape = 15) + 
+  scale_color_gradientn("TE", limits = c(0,1),
+    colours = rev(brewer.pal(n=7, name="RdYlBu")[c(1,1:7,7)])) +
+  theme_classic(base_size = 16)
+```
+
+# GSEA
+### Perform DE
+```{r dge}
+# Start performing DE
+dge = DGEList(counts = bkRNArawMat, samples = bkRNAcolData)
+dge = calcNormFactors(dge)
+dgeDesign = model.matrix(~0+group, data = bkRNAcolData)
+dge = estimateDisp(dge, design = dgeDesign)
+dge = glmQLFit(dge, design = dgeDesign)
+
+# Extract all contrasts
+nGrp = uniqueN(bkRNAcolData$group)
+oupEdgerRes = data.table()
+for(iCon in seq(nGrp)){
+  iContrast = rep(-1/(nGrp-1), nGrp)
+  iContrast[iCon] = 1
+  dgeQLF = glmQLFTest(dge, contrast = iContrast)
+  res = topTags(dgeQLF, n = nrow(dge))
+  res = res@.Data[[1]]
+  res = data.table(group = gsub("group", "", colnames(dge$design)[iCon]),
+                   geneName = rownames(res), res)
+  oupEdgerRes = rbindlist(list(oupEdgerRes, res))
+}
+```
+
+### Perform GSEA
+```{r gsea, fig.height=3.5}
+# Prepare GSEA files
+petPathways = list()
+for(iSig in unique(geneSigPet$type)[1:9]){
+  petPathways[[iSig]] = geneSigPet[type == iSig]$geneName
+}
+ 
+# Perform GSEA on all contrasts
+oupEdgerGSEA = data.table()
+for(iCon in unique(oupEdgerRes$group)){
+  res = oupEdgerRes[group == iCon]
+  tmpRanks = res$logFC
+  names(tmpRanks) = res$geneName
+  set.seed(42)
+  tmpGsea = fgsea(pathways = petPathways, stats = tmpRanks,
+                  nperm = 10000, nproc = 4)
+  tmpGsea = data.table(group = iCon, tmpGsea)
+  oupEdgerGSEA = rbindlist(list(oupEdgerGSEA, tmpGsea))
+}
+
+# Plot GSEA heatmap
+tmp = c("E5-EPI","E6-EPI","E7-EPI",
+        "E5-PE","E6-PE","E7-PE", "E5-TE","E6-TE","E7-TE")
+ggData = oupEdgerGSEA[, c("group", "pathway", "NES", "padj"), with = FALSE]
+ggData$logFDR = -log10(ggData$padj)
+ggData$NESlogFDR = ggData$NES * ggData$logFDR
+ggData$group = factor(ggData$group, 
+                      levels = bkPoolColData[order(media)]$sampleID)
+ggData$pathway = factor(ggData$pathway, levels = tmp)
+ggData = ggData[, c("group", "pathway", "NESlogFDR"), with = FALSE]
+ggData = dcast.data.table(ggData, pathway~group, value.var = "NESlogFDR")
+ggData = as.matrix(ggData[, -1])
+rownames(ggData) = tmp
+pheatmap(ggData, 
+         breaks = seq(-max(abs(range(ggData))), max(abs(range(ggData))),
+                      length.out = 101), annotation_col = ggCol, 
+         annotation_colors = list(media = colorMedia),
+         cluster_cols = FALSE, gaps_col = c(3,7,11,15,19),
+         cluster_rows = FALSE, gaps_row = c(3,6))
+```
+
+
+
+# Session information
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+

@@ -1,0 +1,287 @@
+---
+title: | 
+  | Script for analysing scRNA-seq of day 21 reprogramming intermediates
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "d21i"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(Matrix)
+library(reticulate)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(parallel)
+```
+
+### Define colour palettes and gene signatures
+```{r define}
+colorMedia = c("black","blue","magenta")
+names(colorMedia) = c("D21-fm","D21-nr","D21-tr")
+colorCluster = c("#FFA54F","#C47F3D","#8B5A2B","#A48C74",
+                 "#BEBEBE","#5F5F5F","#000000",
+                 "#4169E1","#4682B4","#000080","#A020F0","#DDA0DD","#FF00FF")
+names(colorCluster) = c("D21fm1","D21fm2","D21fm3","D21fm4",
+                        "D21fm5","D21fm6","D21fm7",
+                        "D21nr1","D21nr2","D21nr3","D21tr1","D21tr2","D21tr3")
+colorIdentity = c("black","olivedrab3","gold","darkorange",
+                  "blue","purple","firebrick3","pink")
+names(colorIdentity) = c("fibroblast","mixed","early-primed","primed",
+                         "naive","nis","nonReprog1","nonReprog2")
+geneSig = fread("data/geneSignatures_suppTable03.tab")
+geneSigPet = fread("data/petSignatures_suppTable12.tab")
+nCores = 30
+```
+
+# IO and Seurat preprocessing
+### Read in mtx file (same format as cellranger output)
+```{r io}
+inpMtx = readMM("data/d21iSC_matrix.mtx.gz")
+inpBar = fread("data/d21iSC_barcodes.tsv.gz", header = FALSE)
+inpGen = fread("data/d21iSC_features.tsv.gz", header = FALSE)
+colnames(inpMtx) = inpBar$V1
+rownames(inpMtx) = inpGen$V2
+inpMtx = as(inpMtx, "dgCMatrix")
+```
+
+### Create Seurat object
+```{r create}
+seu = CreateSeuratObject(counts = inpMtx)
+seu$library = factor(seu$orig.ident, levels = c("D21-fm","D21-nr","D21-tr"))
+Idents(seu) = "library"
+rm(inpMtx, inpBar, inpGen); gc() # Remove objects to save RAM
+```
+
+### Seurat preprocessing
+```{r preproc}
+seu = NormalizeData(seu, normalization.method = "LogNormalize",
+                    scale.factor = 10000, verbose = FALSE)
+seu = FindVariableFeatures(seu, selection.method = "vst",
+                           nfeatures = 1500, verbose = FALSE)
+seu = ScaleData(seu, do.scale = TRUE, verbose = FALSE)
+```
+
+# Seurat reduction (PCA/UMAP)
+### PCA / elbow plot
+```{r pca}
+nPCs = 15
+seu = RunPCA(seu, npcs = 30, seed.use = 42,
+             features = VariableFeatures(object = seu), verbose = FALSE)
+ElbowPlot(seu, ndims = 30)
+```
+
+### UMAP
+```{r umap}
+# seu = RunTSNE(seu, dims = 1:nPCs, tsne.method = "FIt-SNE", 
+#               perplexity = 30, nthreads = nCores, 
+#               fast_tsne_path = "/home/john/bin/fast_tsne", seed.use = 42)
+seu = RunUMAP(seu, dims = 1:nPCs, umap.method = "uwot", 
+              seed.use = 42, verbose = FALSE)
+ggOut = DimPlot(seu, cols = colorMedia)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$UMAP_1)) / 
+                      diff(range(ggOut$data$UMAP_2)))
+```
+
+# Seurat clustering
+### Perform clustering and relabel clusters
+```{r clust}
+set.seed(42)
+seu = FindNeighbors(seu, reduction = "pca", dims = 1:nPCs, verbose = FALSE)
+seu = FindClusters(seu, resolution = 0.5, random.seed = 42, verbose = FALSE)
+remapCluster = c("D21fm7","D21tr3","D21nr3","D21nr2","D21tr2","D21fm2","D21fm5",
+                 "D21fm3","D21fm6","D21tr1","D21fm4","D21nr1","D21fm1")
+seu$seurat_clusters = remapCluster[as.numeric(seu$seurat_clusters)]
+seu$seurat_clusters = factor(seu$seurat_clusters, levels = names(colorCluster))
+ggOut = DimPlot(seu, group.by = "seurat_clusters", cols = colorCluster)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$UMAP_1)) / 
+                      diff(range(ggOut$data$UMAP_2)))
+```
+
+### Proportion plots
+```{r prop}
+# ggData = data.frame(table(seu$library, seu$seurat_clusters)) # cell number
+ggData = data.frame(prop.table(table(seu$library, seu$seurat_clusters), 
+                               margin = 2))
+colnames(ggData) = c("library", "cluster", "value")
+ggplot(ggData, aes(cluster, value, fill = library)) +
+  geom_col() + coord_flip() +
+  ylab("Proportion of Cells (%)") + xlab("Clusters") + 
+  scale_fill_manual(values = colorMedia) + theme_classic(base_size = 24)
+```
+
+# scanpy reduction (diffMap/FDL)
+### Load scanpy via reticulate and create adata
+```{r scanpy}
+sc <- import("scanpy", convert = FALSE)
+ad <- import("anndata", convert = FALSE)
+scipy <- import(module = 'scipy.sparse', convert = FALSE)
+sp_sparse_csc <- scipy$csc_matrix
+
+adMat = seu@assays$RNA@data
+adMat = sp_sparse_csc(
+  tuple(np_array(adMat@x), np_array(adMat@i), np_array(adMat@p)),
+  shape = tuple(adMat@Dim[1], adMat@Dim[2]))
+adObs = seu@meta.data
+adVar = data.frame(geneName = rownames(seu))
+adObsm = list()
+adObsm[["X_pca"]] = np_array(seu@reductions$pca@cell.embeddings)
+adObsm[["X_umap"]] = np_array(seu@reductions$umap@cell.embeddings)
+adata = ad$AnnData(X = adMat$T, obs = adObs, var = adVar, obsm = dict(adObsm))
+adata$var_names = rownames(seu)
+adata$obs_names = colnames(seu)
+```
+
+### Compute diffusion maps
+```{r diffMap}
+sc$pp$neighbors(adata, n_neighbors = as.integer(30), 
+                n_pcs = as.integer(nPCs), random_state = as.integer(42))
+sc$tl$diffmap(adata, n_comps = as.integer(20))
+oupDR = py_to_r(adata$obsm['X_diffmap'])
+rownames(oupDR) = colnames(seu)
+colnames(oupDR) = paste0("DC_", 0:(20-1))
+oupDR = oupDR[, paste0("DC_", seq(5))]
+oupDR[, 2] = - oupDR[, 2] # Flip coordinates
+seu[["diffmap"]] = CreateDimReducObject(embeddings = oupDR, key = "DC_", 
+                                        assay = DefaultAssay(seu))
+ggOut = DimPlot(seu, reduction = "diffmap", group.by = "library", cols = colorMedia)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$DC_1)) / 
+                      diff(range(ggOut$data$DC_2)))
+```
+
+### Compute FDL
+```{r fdl}
+sc$tl$draw_graph(adata, layout = "fa", init_pos = "X_umap",
+                 n_jobs = as.integer(nCores), random_state = as.integer(42))
+oupDR = py_to_r(adata$obsm['X_draw_graph_fa'])
+rownames(oupDR) = colnames(seu)
+colnames(oupDR) = c("FDL_1","FDL_2")
+oupDR = oupDR / 10000
+seu[["fdl"]] <- CreateDimReducObject(embeddings = oupDR, key = "FDL_", 
+                                     assay = DefaultAssay(seu))
+ggOut = DimPlot(seu, reduction = "fdl", group.by = "library", cols = colorMedia)
+ggRatio = diff(range(ggOut$data$FDL_1)) / diff(range(ggOut$data$FDL_2))
+ggOut + coord_fixed(ratio = ggRatio)
+ggOut = DimPlot(seu, reduction = "fdl", group.by = "seurat_clusters", cols = colorCluster)
+ggOut + coord_fixed(ratio = ggRatio)
+```
+
+### Gene expression on FDL
+```{r gene, message=FALSE, fig.height=3}
+p1 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = "GATA3")
+p1 = p1 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p2 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = "NANOG")
+p2 = p2 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p1 + p2
+
+p1 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = "ZIC2")
+p1 = p1 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p2 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = "DNMT3L")
+p2 = p2 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p1 + p2
+```
+
+# Scoring gene signatures
+### Load scoring function
+```{r geneS}
+# Similar to Seurat's AddModuleScore [Tirosh et al, Science (2016)]
+geneScoreSc <- function(geneExpr, genes, nBin = 25, nCtrl = 100, 
+                        rngseed = 42, nCores = 4){
+  # Bin genes by gene expression
+  geneBin = Matrix::rowMeans(geneExpr)
+  geneBin = data.table(geneID = names(geneBin), avgExpr = geneBin)
+  geneBin$binID = cut(geneBin$avgExpr, nBin, labels = FALSE)
+  geneList = genes[genes %in% rownames(geneExpr)]
+  oupScores = do.call(
+    rbind, mclapply(geneList, function(iGene){
+      # Generate control aggregate gene expression
+      set.seed(rngseed)
+      binUse = geneBin[geneID == iGene]$binID
+      nPick = min(nrow(geneBin[binID == binUse]), nCtrl)
+      geneCtrl = sample(geneBin[binID == binUse]$geneID, 
+                        size = nPick, replace = FALSE)
+      # Compute score for each gene
+      tmpOut = data.table(sampleID = colnames(geneExpr),
+                          geneID = iGene, score = geneExpr[iGene,])
+      if(length(geneCtrl) > 1){
+        tmpOut$score = tmpOut$score - Matrix::colMeans(geneExpr[geneCtrl,])
+      } else {
+        tmpOut$score = tmpOut$score - geneExpr[geneCtrl,]
+      }
+      return(tmpOut)
+    }, mc.cores = nCores))
+  oupScores = oupScores[,.(aveScore = mean(score)), by = "sampleID"]
+  oupSc = oupScores$aveScore
+  names(oupSc) = oupScores$sampleID
+  oupSc = oupSc[colnames(geneExpr)]
+  return(oupSc)
+}
+```
+
+### Score defined gene signatures and determine identity
+```{r geneSig}
+for(i in unique(geneSig$module)){
+  seu[[i]] = geneScoreSc(seu@assays[["RNA"]]@data, nCores = nCores,
+                         geneSig[module == i]$geneName)
+}
+oupSign = seu[[unique(geneSig$module)]]
+seu$identity = colnames(oupSign)[apply(oupSign, 1, which.max)]
+seu$identity = factor(seu$identity, levels = unique(geneSig$module))
+ggOut = DimPlot(seu, reduction = "fdl", group.by = "identity", cols = colorIdentity)
+ggOut + coord_fixed(ratio = ggRatio)
+```
+
+### Score TE/EPI/PE signatures
+```{r geneSigPet, message=FALSE, fig.height=3}
+for(i in c("TE","EPI","PE")){
+  seu[[i]] = geneScoreSc(seu@assays[["RNA"]]@data, nCores = nCores,
+                         geneSigPet[type == paste0("ALL-",i)]$geneName)
+}
+p1 = FeaturePlot(seu, reduction = "fdl", features = "TE")
+p1 = p1 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = rev(brewer.pal(9, "RdYlBu"))[c(1,1:9,9)])
+p2 = FeaturePlot(seu, reduction = "fdl", features = "EPI")
+p2 = p2 + coord_fixed(ratio = ggRatio) + 
+  scale_color_gradientn(colors = rev(brewer.pal(9, "RdYlBu"))[c(1,1:9,9)])
+p1 + p2
+```
+
+# Session information
+### Save Seurat object
+```{r save}
+saveRDS(seu, file = "data/seu_d21i.rds")
+```
+
+### Python modules
+```{r pyInfo}
+print(paste0("scanpy: ", sc[["__version__"]]))
+print(paste0("anndata: ", ad[["__version__"]]))
+```
+
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+

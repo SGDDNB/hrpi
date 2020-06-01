@@ -1,0 +1,295 @@
+---
+title: | 
+  | Script for identifying gene signatures from snRNA-seq of human reprogramming
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "hrpi2"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(Matrix)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(parallel)
+library(pheatmap)
+```
+
+### Define colour palettes and gene signatures
+```{r define}
+colorLib = c("snow2","grey10","grey30","grey50",
+             "#EEDD82","#F6AF64","#FF8247","#C46323","#8B4500",
+             "#ADD8E6","#6C95E3","#3353E7","#0C14F9","#0000CC","#000080")
+names(colorLib) = c("scRNA(unused)","D0-FM","D4-FM","D8-FM",
+                    "D12-PR","D16-PR","D20-PR","D24-PR","P20-PR", 
+                    "D12-NR","D16-NR","D20-NR","D24-NR","P3-NR","P20-NR")
+colorCluster = c("snow2","#EECFA1","#A38E6E","#A49B8E","#8E8E8E","#000000",
+                 "#698B22","#FFA500","#FF8B00","#D86B00","#8B4500",
+                 "#63B8FF","#36648B","#4169E1","#000080","#A020F0",
+                 "#FF3030","#8B1A1A","#FFAEB9","#CD8C95","#8B5F65","#FF6347")
+names(colorCluster) = c("scRNA(unused)", paste0("snRNA-fm",seq(5)), "snRNA-mix", 
+                        paste0("snRNA-pr",seq(4)), paste0("snRNA-nr",seq(4)), 
+                        "snRNA-nic", paste0("snRNA-re",seq(6)))
+colorIdentity = c("black","olivedrab3","gold","darkorange",
+                  "blue","purple","firebrick3","pink")
+names(colorIdentity) = c("fibroblast","mixed","early-primed","primed",
+                         "naive","nis","nonReprog1","nonReprog2")
+geneSig = fread("data/geneSignatures_suppTable03.tab")
+# metadata from integrated sn/scRNA-seq
+intColData = fread("data/hrpi_colData_suppTable01.tab")  
+nCores = 30
+```
+
+# IO and preprocessing
+### Read in mtx file (same format as cellranger output)
+```{r io}
+# Read in snRNA data
+inpMtx = readMM("data/hrpiSN_matrix.mtx.gz")
+inpBar = fread("data/hrpiSN_barcodes.tsv.gz", header = FALSE)
+inpGen = fread("data/hrpiSN_features.tsv.gz", header = FALSE)
+colnames(inpMtx) = inpBar$V1
+rownames(inpMtx) = inpGen$V1 # we used ensembl IDs here...
+inpMtx = as(inpMtx, "dgCMatrix")
+
+# Ensembl ID to geneName mapping
+scRnaGene = fread("data/hrpiSC_features.tsv.gz", header = FALSE)
+gID2name = inpGen$V2; names(gID2name) = inpGen$V1
+gName2ID = inpGen$V1; names(gName2ID) = inpGen$V2
+```
+
+### Create Seurat object
+```{r create}
+seu = CreateSeuratObject(counts = inpMtx)
+seu$library = factor(seu$orig.ident, levels = names(colorLib)[-1])
+Idents(seu) = "library"
+rm(inpMtx, inpBar, inpGen); gc() # Remove objects to save RAM
+```
+
+### Seurat preprocessing
+```{r preproc}
+seu = NormalizeData(seu, normalization.method = "LogNormalize",
+                    scale.factor = 10000, verbose = FALSE)
+seu = FindVariableFeatures(seu, selection.method = "vst",
+                           nfeatures = 1500, verbose = FALSE)
+seu = ScaleData(seu, do.scale = TRUE, verbose = FALSE)
+```
+
+# snRNA-seq PCA + clustering
+### PCA / elbow plot
+```{r pca}
+nPCs = 12
+seu = RunPCA(seu, npcs = 30, seed.use = 42,
+             features = VariableFeatures(object = seu), verbose = FALSE)
+ElbowPlot(seu, ndims = 30)
+```
+
+### Perform clustering and relabel clusters
+```{r clust, fig.height=7}
+# Perform clustering
+set.seed(42)
+seu = FindNeighbors(seu, reduction = "pca", dims = 1:nPCs, verbose = FALSE)
+seu = FindClusters(seu, resolution = 0.5, random.seed = 42, verbose = FALSE)
+remapCluster = c("re4","nr3","nr2","re5","fm1","re1","pr4",
+                 "fm4","fm2","mix","re2","re3","nr1","pr1",
+                 "fm3","nr4","fm5","pr3","pr2","nic","re6")
+remapCluster = paste0("snRNA-", remapCluster)
+seu$seurat_clusters = remapCluster[as.numeric(seu$seurat_clusters)]
+seu$seurat_clusters = factor(seu$seurat_clusters, levels = names(colorCluster)[-1])
+
+# Merge snRNA cluster with integrated data FDL
+tmp = data.table(sampleID = colnames(seu),
+                 cluster = seu$seurat_clusters)
+ggData = intColData[, c("sampleID", "FDL1", "FDL2")]
+ggData = tmp[ggData, on = "sampleID"]
+ggData[is.na(cluster)]$cluster = "scRNA(unused)"
+
+# Check that snRNA cluster matches supp table
+ggData$cluster = factor(ggData$cluster, levels = names(colorCluster))
+intColData$snClust = factor(intColData$snClust, levels = names(colorCluster))
+all.equal(intColData$snClust, ggData$cluster)
+
+# Actual plot
+ggplot(ggData, aes(FDL1, FDL2, color = cluster)) +
+  geom_point() + scale_color_manual(values = colorCluster) +
+  theme_classic(base_size = 20) + theme(legend.position = "bottom",
+                                        legend.text=element_text(size = 10)) +
+  coord_fixed(ratio = diff(range(ggData$FDL1)) / diff(range(ggData$FDL2))) + 
+  guides(color = guide_legend(override.aes = list(size = 3), ncol = 4))
+```
+
+# Cluster-specific marker genes
+### Perform pairwise differential expression
+This is a very time-consuming calculation.
+
+```{r deg}
+# Perform DE for all pairs
+tmpIdents = levels(seu$seurat_clusters)
+tmpContrasts = t(combn(seq_along(tmpIdents),2))
+if(!dir.exists("deResults")){dir.create("deResults")} # store DE results here
+geneList = split(rownames(seu), ceiling(seq_along(rownames(seu))/100))
+for(iDE in seq(nrow(tmpContrasts))){
+  # Extract corresponding cells
+  i1 = tmpIdents[tmpContrasts[iDE,1]]
+  i2 = tmpIdents[tmpContrasts[iDE,2]]
+  i1cell = colnames(seu)[seu$seurat_clusters == i1]
+  i2cell = colnames(seu)[seu$seurat_clusters == i2]
+  if(!file.exists(paste0("deResults/DE_", i1, "_", i2, ".rds"))){
+    # Perform wilcox DE
+    i1expr = seu@assays[["RNA"]]@data[, i1cell]
+    i2expr = seu@assays[["RNA"]]@data[, i2cell]
+    oupWilcox = do.call(
+      rbind, mclapply(seq_along(geneList), function(i){
+        # Perform Wilcoxon Rank Sum Test
+        tmpOut = sapply(X = geneList[[i]],
+                        FUN = function(x) {
+                          return(wilcox.test(x = i1expr[x, ], 
+                                             y = i2expr[x, ])$p.value)
+                        })
+        tmpOut = data.table(geneID = names(tmpOut), pval = tmpOut)
+        return(tmpOut)
+      }, mc.cores = nCores))
+    oupWilcox = data.table(pairDE = paste0(i1, "_", i2), oupWilcox)
+    oupWilcox$FDR = p.adjust(p = oupWilcox$pval, method = "BH")
+    saveRDS(oupWilcox, paste0("deResults/DE_", i1, "_", i2, ".rds"))
+  }
+}
+
+# Keep only DEGs
+oupDE = data.table()
+for(iDE in seq(nrow(tmpContrasts))){
+  i1 = tmpIdents[tmpContrasts[iDE,1]]
+  i2 = tmpIdents[tmpContrasts[iDE,2]]
+  tmp1 = readRDS(paste0("deResults/DE_", i1, "_", i2, ".rds"))
+  tmp1 = tmp1[FDR < 0.01]
+  tmp2 = tmp1
+  tmp2$pairDE = paste0(i2, "_", i1)
+  oupDE = rbindlist(list(oupDE, tmp1, tmp2))
+}
+```
+
+### Identify marker genes
+```{r markers}
+# Calculate cluster-averaged expression
+oupAvgExpr = matrix(0, nrow = nrow(seu), ncol = uniqueN(seu$seurat_clusters))
+colnames(oupAvgExpr) = unique(seu$seurat_clusters)
+rownames(oupAvgExpr) = rownames(seu)
+for(i in colnames(oupAvgExpr)){
+  oupAvgExpr[,i] = rowMeans(
+    expm1(seu@assays[["RNA"]]@data[, seu$seurat_clusters == i]))
+}
+oupAvgExpr = log2(oupAvgExpr + 1)
+
+# Calculate log2FC between all pairs of clusters
+oupMarkers = do.call(
+  rbind, mclapply(seq(nrow(tmpContrasts)), function(iDE){
+    id1 = tmpIdents[tmpContrasts[iDE,1]]
+    id2 = tmpIdents[tmpContrasts[iDE,2]]
+    tmpOup = oupAvgExpr[,id1] - oupAvgExpr[,id2]
+    tmpOup1 = data.table(pairDE = paste0(id1, "_", id2), 
+                         geneID = names(tmpOup), log2FC = tmpOup)
+    tmpOup2 = data.table(pairDE = paste0(id2, "_", id1), 
+                         geneID = names(tmpOup), log2FC = -tmpOup)
+    tmpOup = rbindlist(list(tmpOup1, tmpOup2))
+    return(tmpOup)
+  }, mc.cores = nCores))
+
+# Find no. times a gene is DE
+oupDE = oupMarkers[oupDE, on = c("pairDE", "geneID")]
+oupDE = oupDE[log2FC > 1.5]  # only positive markers
+oupDE$clust = tstrsplit(oupDE$pairDE, "_")[[1]]
+oupDE$clustB = tstrsplit(oupDE$pairDE, "_")[[2]]
+oupDE = oupDE[, .(nDE = length(clustB)), by = c("clust", "geneID")]
+
+# Calculate average log2FC and append no. times gene is DE
+oupMarkers$clust = tstrsplit(oupMarkers$pairDE, "_")[[1]]
+oupMarkers = oupMarkers[, .(aveLFC = mean(log2FC)), 
+                        by = c("clust", "geneID")]
+oupMarkers = oupMarkers[aveLFC > 1.5]
+oupMarkers = oupDE[oupMarkers, on = c("clust", "geneID")]
+oupMarkers = oupMarkers[nDE >= 14]
+table(oupMarkers$clust)
+```
+
+# Gene signatures
+### Jaccard similarity of marker genes
+```{r jaccard, fig.height=6}
+# Compute Jaccard similarity matrix
+oupJac = matrix(1, nrow = length(tmpIdents), ncol = length(tmpIdents))
+colnames(oupJac) = tmpIdents
+rownames(oupJac) = tmpIdents
+for(iDE in seq(nrow(tmpContrasts))){
+  i1 = tmpIdents[tmpContrasts[iDE,1]]
+  i2 = tmpIdents[tmpContrasts[iDE,2]]
+  g1 = oupMarkers[clust == i1]$geneID
+  g2 = oupMarkers[clust == i2]$geneID
+  oupJac[i1,i2] = length(intersect(g1,g2)) / length(union(g1,g2))
+  oupJac[i2,i1] = oupJac[i1,i2]
+}
+
+# Plot heatmap
+jacAnnot = data.frame(
+  signature = c(rep("fibroblast",4),"nil","mixed","early-primed",
+                rep("primed",3),rep("naive",4),"nis","nonReprog1","nil",
+                rep("nonReprog1",3),"nonReprog2"))
+rownames(jacAnnot) = tmpIdents
+jacAnnot$signature = factor(jacAnnot$signature, levels = c(names(colorIdentity),"nil"))
+tmpCol = c(colorIdentity, "grey")
+names(tmpCol) = levels(jacAnnot$signature)
+pheatmap(oupJac, 
+         cutree_rows = 5, cutree_cols = 5, clustering_method = "ward.D2",
+         annotation_row = jacAnnot, annotation_col = jacAnnot,
+         annotation_colors = list(signature = tmpCol))
+```
+
+### Generate gene signatures
+```{r geneSig}
+# Merge marker genes into signatures
+jacAnnot = data.table(clust = rownames(jacAnnot), jacAnnot)
+oupSig = jacAnnot[oupMarkers, on = "clust"]
+oupSig = oupSig[signature != "nil"]
+oupSig = oupSig[, .(nTimes = length(clust)), by = c("signature", "geneID")]
+
+# Remove genes that only appear once in modules containing >=2 clusters
+oupSig = oupSig[!(nTimes == 1 & signature == "fibroblast")]
+oupSig = oupSig[!(nTimes == 1 & signature == "primed")]
+oupSig = oupSig[!(nTimes == 1 & signature == "naive")]
+oupSig = oupSig[!(nTimes == 1 & signature == "nonReprog1")]
+oupSig = oupSig[, -"nTimes"]
+oupSig$geneName = gID2name[oupSig$geneID]
+
+# Keep only genes in sn/scRNA integrated dataset and discard MT genes
+oupSig = oupSig[geneID %in% intersect(scRnaGene$V1, rownames(seu))]
+oupSig = oupSig[!grep("^MT-", geneName)]
+
+# Check that it matches the supp Table
+colnames(oupSig)[1] = "module"
+oupSig$module = factor(oupSig$module, levels = names(colorIdentity))
+geneSig$module = factor(geneSig$module, levels = names(colorIdentity))
+all.equal(oupSig[order(module, geneID)], 
+          geneSig[order(module, geneID)])
+```
+
+# Session information
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+

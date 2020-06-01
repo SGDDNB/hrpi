@@ -1,0 +1,222 @@
+---
+title: | 
+  | Script for analysing bulk RNA-seq of iTSC-related samples
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "tscRNA"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(edgeR)
+```
+
+### Define colour palettes
+```{r define}
+colorMedia = c("black", "darkorange", "blue", "magenta", "purple", 
+               "thistle2", "thistle3", "violetred", "thistle2", 
+               "olivedrab2", "olivedrab3", "olivedrab4",
+               "tomato2", "tomato3", "tomato4")
+names(colorMedia) = c("Fibroblast-D0", "Primed-P10", "t2iLGoY-P10", 
+                      "d8iTSC-P10", "d21NiTSC-P10", 
+                      "TSC-CT", "TSC-blast", "TSC-BT5", "TSC",
+                      "EVT-d8iTSC", "EVT-d21NiTSC", "EVT-TSC",
+                      "ST-d8iTSC", "ST-d21NiTSC", "ST-TSC")
+```
+
+# IO and library normalization
+### Read in coldata and raw counts
+```{r io}
+tscRNAcolData = fread("data/tscRNA_colData_suppTable14.tab")
+tscRNArawCts  = fread("data/tscRNA_rawCts.tab.gz")
+tscRNArawMat  = as.matrix(tscRNArawCts[, -c(1:3)])
+rownames(tscRNArawMat) = tscRNArawCts$geneName
+```
+
+### Calculate log2FPKM
+```{r log2FPKM}
+dge = DGEList(tscRNArawMat, genes = rownames(tscRNArawMat))
+dge$genes$Length = tscRNArawCts$geneLen
+dge = calcNormFactors(dge)
+tscRNAlogFPKM = rpkm(dge, normalized.lib.sizes = TRUE, log = FALSE)
+tscRNAlogFPKM = log2(tscRNAlogFPKM + 1)
+```
+
+###  Combine with Okae 2018
+```{r okae}
+tmp = fread("data/tscExt_OkaeLogFPKM.tab.gz")
+tscOkaeLogFPKM = as.matrix(tmp[, -c(1:2)])
+rownames(tscOkaeLogFPKM) = tmp$geneName
+tmp = intersect(rownames(tscRNAlogFPKM), rownames(tscOkaeLogFPKM))
+tmp1 = tscRNAlogFPKM[tmp, tscRNAcolData$sampleID]
+tmp2 = tscOkaeLogFPKM[tmp, ]
+
+mergeLogFPKM = cbind(tmp1, tmp2)
+tmp2 = data.table(sampleID = colnames(tmp2),
+                  group = tstrsplit(colnames(tmp2), "_")[[1]],
+                  label = colnames(tmp2))
+tmp2$group = gsub("^TSCT", "TSC-CT", tmp2$group)
+tmp2$group = gsub("^TSblast", "TSC-blast", tmp2$group)
+tmp2$group = gsub("-TSblast|-TSCT", "-TSC", tmp2$group)
+tmp2$group = gsub("\\(2D)|\\(3D)", "", tmp2$group)
+mergeColData = rbindlist(list(tscRNAcolData, tmp2))
+mergeColData$study = c(rep("Liu2020", 23), rep("Okae2018", 21))
+```
+
+# Gene barplots / LFC barplot
+### Gene barplot
+```{r gbarplot}
+geneList = c("ANPEP","NANOG","ZIC2","KLF17","TFAP2C","TP63","KRT7",
+             "TEAD4", "GATA2", "GATA3", "ELF5")
+ggData = mergeColData[group %in% names(colorMedia)[1:7]][, -"study"]
+ggData$group = factor(ggData$group, levels = names(colorMedia)[1:7])
+for(i in geneList){
+  ggData[[i]] = mergeLogFPKM[i, ggData$sampleID]
+}
+ggData = melt.data.table(ggData, id.vars = c("sampleID","group","label"),
+                         variable.name = "gene", value.name = "logFPKM")
+ggplot(ggData, aes(group, logFPKM, fill = group)) +
+  geom_bar(stat = "summary", fun = "mean") + geom_point() + 
+  facet_wrap(~gene, nrow = 1) + scale_fill_manual(values = colorMedia[1:7]) +
+  theme_classic(base_size = 12) + theme(axis.text.x = element_blank(), 
+                                        legend.position = "bottom")
+```
+
+### LFC barplot (ST)
+```{r lfcST}
+# LFC barplot prep
+tmp1 = mergeLogFPKM[, mergeColData[grep("d8iTSC", group)]$sampleID] - 
+  rowMeans(mergeLogFPKM[, mergeColData[group == "d8iTSC-P10"]$sampleID])
+tmp2 = mergeLogFPKM[, mergeColData[grep("d21NiTSC", group)]$sampleID] - 
+  rowMeans(mergeLogFPKM[, mergeColData[group == "d21NiTSC-P10"]$sampleID])
+tmp3 = mergeLogFPKM[, mergeColData[study == "Okae2018"]$sampleID] - 
+  rowMeans(mergeLogFPKM[, mergeColData[grep("^TSC", group)]$sampleID])
+tmpMat = cbind(tmp1, tmp2, tmp3)
+
+# LFC barplot (ST)
+geneList = c("CGA","CGB1","CSH1","CSH2","CYP19A1","INHA","PSG1","PSG3")
+ggData = mergeColData[group %in% names(colorMedia)[c(4:7,13:15)]]
+ggData = ggData[, -"study"]
+ggData[grep("^TSC", group)]$group = "TSC"
+ggData$group = factor(ggData$group, 
+                      levels = c("d8iTSC-P10","ST-d8iTSC","d21NiTSC-P10",
+                                 "ST-d21NiTSC","TSC","ST-TSC"))
+for(i in geneList){
+  ggData[[i]] = tmpMat[i, ggData$sampleID] + 2
+}
+ggData = melt.data.table(ggData, id.vars = c("sampleID","group","label"),
+                         variable.name = "gene", value.name = "logFPKM")
+ggplot(ggData, aes(group, logFPKM, fill = group)) +
+  geom_bar(stat = "summary", fun = "mean") + geom_point() + 
+  facet_wrap(~gene, nrow = 1) + ylab("Log2FC relative to iTSC/TSC") + 
+  scale_fill_manual(values = colorMedia[c(4,13,5,14,9,15)]) +
+  scale_y_continuous(breaks = c(2,4,6,8,10,12), labels = c(0,2,4,6,8,10)) +
+  theme_classic(base_size = 12) + theme(axis.text.x = element_blank(), 
+                                        legend.position = "bottom")
+```
+
+### LFC barplot (EVT)
+```{r lfcEVT}
+# LFC barplot (EVT)
+geneList = c("ADAM12","DIO2","EBI3","FLT1","ITGA1","HTRA4","MCAM","MMP2")
+ggData = mergeColData[group %in% names(colorMedia)[c(4:7,10:12)]]
+ggData = ggData[, -"study"]
+ggData[grep("^TSC", group)]$group = "TSC"
+ggData$group = factor(ggData$group, 
+                      levels = c("d8iTSC-P10","EVT-d8iTSC","d21NiTSC-P10",
+                                 "EVT-d21NiTSC","TSC","EVT-TSC"))
+for(i in geneList){
+  ggData[[i]] = tmpMat[i, ggData$sampleID] + 2
+}
+ggData = melt.data.table(ggData, id.vars = c("sampleID","group","label"),
+                         variable.name = "gene", value.name = "logFPKM")
+ggplot(ggData, aes(group, logFPKM, fill = group)) +
+  geom_bar(stat = "summary", fun = "mean") + geom_point() + 
+  facet_wrap(~gene, nrow = 1) + ylab("Log2FC relative to iTSC/TSC") + 
+  scale_fill_manual(values = colorMedia[c(4,10,5,11,9,12)]) +
+  scale_y_continuous(breaks = c(2,4,6,8,10,12), labels = c(0,2,4,6,8,10)) +
+  theme_classic(base_size = 12) + theme(axis.text.x = element_blank(), 
+                                        legend.position = "bottom")
+```
+
+# Correlation comparison with literature
+### IO Dong and merge
+```{r dong}
+tmp = fread("data/tscExt_DongLogFPKM.tab.gz")
+colnames(tmp) = c("geneID","geneName","ESC-primed_AN","ESC-primed_H9",
+                  "ESC-naive_AN","ESC-naive_H9","TSC-naive_WIBR3",
+                  "TSC-naive_ANr1","TSC-naive_ANr2","TSC-naive_H9r1",
+                  "TSC-naive_H9r2","TSC-BT5_rep1","TSC-BT5_rep2",
+                  "EVT-nTSC_AN","EVT-nTSC_H9","ST-nTSC_AN","ST-nTSC_H9")
+tscDongLogFPKM = as.matrix(tmp[, -c(1:2)])
+rownames(tscDongLogFPKM) = tmp$geneName
+tmp = intersect(rownames(mergeLogFPKM), rownames(tscDongLogFPKM))
+tmp1 = mergeLogFPKM[tmp, ]
+tmp2 = tscDongLogFPKM[tmp, ]
+
+mergeLogFPKM = cbind(tmp1, tmp2)
+tmp2 = data.table(sampleID = colnames(tmp2),
+                  group = tstrsplit(colnames(tmp2), "_")[[1]],
+                  label = colnames(tmp2))
+tmp2$study = "Dong2020"
+mergeColData = rbindlist(list(mergeColData, tmp2))
+```
+
+### Aggregate logFPKM by cell type
+```{r aggr}
+aggrLogFPKM = matrix(0, nrow = nrow(mergeLogFPKM), 
+                     ncol = uniqueN(mergeColData$group))
+colnames(aggrLogFPKM) = unique(mergeColData$group)
+rownames(aggrLogFPKM) = rownames(mergeLogFPKM)
+for(i in colnames(aggrLogFPKM)){
+  aggrLogFPKM[,i] = rowMeans(
+    2 ^ mergeLogFPKM[, mergeColData[group == i]$sampleID] - 1)
+}
+aggrLogFPKM = log2(aggrLogFPKM + 1)
+aggrColData = data.frame(
+  study = c(rep("Liu2020", 9), rep("Okae2018", 7), rep("Dong2020", 6)))
+rownames(aggrColData) = colnames(aggrLogFPKM)
+```
+
+### Integrate between datasets and plot Spearman correlation
+```{r spearHeat, fig.height=6}
+# Integrate between datasets and take Spearman
+aggrCor = removeBatchEffect(aggrLogFPKM, batch = aggrColData$study)
+aggrCor = cor(aggrCor, method = "spearman")
+
+# Plot correlation heatmap
+tmpCol = c("purple", "thistle2", "violetred")
+names(tmpCol) = c("Liu2020", "Okae2018", "Dong2020")
+pheatmap(aggrCor, 
+         cutree_rows = 5, cutree_cols = 5, clustering_method = "ward.D2",
+         annotation_row = aggrColData, annotation_col = aggrColData,
+         annotation_colors = list(study = tmpCol))
+```
+
+
+
+# Session information
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+

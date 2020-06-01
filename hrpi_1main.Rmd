@@ -1,0 +1,382 @@
+---
+title: | 
+  | Script for analysing integrated sn/scRNA-seq of human reprogramming intermediates
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "hrpi"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(Matrix)
+library(reticulate)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(parallel)
+```
+
+### Define colour palettes and gene signatures
+```{r define}
+colorLib = c("darkseagreen","red","purple","grey10","grey30","grey50",
+             "#EEDD82","#F6AF64","#FF8247","#C46323","#8B4500",
+             "#ADD8E6","#6C95E3","#3353E7","#0C14F9","#0000CC","#000080")
+names(colorLib) = c("FM","PR","NR","D0-FM","D4-FM","D8-FM",
+                    "D12-PR","D16-PR","D20-PR","D24-PR","P20-PR", 
+                    "D12-NR","D16-NR","D20-NR","D24-NR","P3-NR","P20-NR")
+colorCluster = c("#EECFA1","#B29B78","#958671","#B3B0AA","#717171","#000000",
+                 "#698B22","#FFA500","#FF7F00","#8B4500",
+                 "#63B8FF","#36648B","#4169E1","#000080","#A020F0",
+                 "#FF3030","#8B1A1A","#FFAEB9","#CD8C95","#8B5F65","#FF6347")
+names(colorCluster) = c(paste0("fm",seq(6)), "mix", paste0("pr",seq(3)),
+                        paste0("nr",seq(4)), "nic", paste0("re",seq(6)))
+colorIdentity = c("black","olivedrab3","gold","darkorange",
+                  "blue","purple","firebrick3","pink")
+names(colorIdentity) = c("fibroblast","mixed","early-primed","primed",
+                         "naive","nis","nonReprog1","nonReprog2")
+geneSig = fread("data/geneSignatures_suppTable03.tab")
+geneSigPet = fread("data/petSignatures_suppTable12.tab")
+nCores = 30
+```
+
+# IO and Seurat preprocessing
+### Read in mtx file (same format as cellranger output)
+```{r io}
+# Read in snRNA data
+inpMtx1 = readMM("data/hrpiSN_matrix.mtx.gz")
+inpBar1 = fread("data/hrpiSN_barcodes.tsv.gz", header = FALSE)
+inpGen1 = fread("data/hrpiSN_features.tsv.gz", header = FALSE)
+colnames(inpMtx1) = inpBar1$V1
+rownames(inpMtx1) = inpGen1$V1 # we used ensembl IDs here...
+inpMtx1 = as(inpMtx1, "dgCMatrix")
+
+# Read in scRNA data
+inpMtx2 = readMM("data/hrpiSC_matrix.mtx.gz")
+inpBar2 = fread("data/hrpiSC_barcodes.tsv.gz", header = FALSE)
+inpGen2 = fread("data/hrpiSC_features.tsv.gz", header = FALSE)
+colnames(inpMtx2) = inpBar2$V1
+rownames(inpMtx2) = inpGen2$V1 # we used ensembl IDs here...
+inpMtx2 = as(inpMtx2, "dgCMatrix")
+
+# Ensembl ID to geneName mapping
+allGenes = intersect(rownames(inpMtx1), rownames(inpMtx2)) # Get common genes
+gID2name = inpGen1$V2; names(gID2name) = inpGen1$V1
+gID2name = gID2name[allGenes]
+gName2ID = names(gID2name); names(gName2ID) = gID2name
+```
+
+### Create Seurat object list
+```{r preproc}
+seu = list(snRNA = CreateSeuratObject(counts = inpMtx1),
+           scRNA = CreateSeuratObject(counts = inpMtx2))
+rm(inpMtx1, inpBar1, inpGen1,
+   inpMtx2, inpBar2, inpGen2); gc() # Remove objects to save RAM
+for (i in 1:length(seu)) {
+  seu[[i]] = NormalizeData(seu[[i]], normalization.method = "LogNormalize",
+                           scale.factor = 10000, verbose = FALSE)
+  seu[[i]] = FindVariableFeatures(seu[[i]], selection.method = "vst", 
+                                  nfeatures = 1500, verbose = FALSE)
+}
+```
+
+# Integrate snRNA and scRNA
+### Find integration anchors
+```{r intA}
+# All are default settings except anchor.features
+seuAnch = FindIntegrationAnchors(seu, anchor.features = 1500, 
+                                 normalization.method = "LogNormalize", 
+                                 reduction = "cca", dims = 1:30,
+                                 k.anchor = 5, k.filter = 200,
+                                 k.score = 30, max.features = 200)
+```
+
+### Integrate datasets
+```{r intD}
+# Here, we integrate all genes common between snRNA and scRNA
+seu = IntegrateData(anchorset = seuAnch, dims = 1:30,
+                    normalization.method = "LogNormalize",
+                    features.to.integrate = allGenes)
+DefaultAssay(seu) = "integrated"
+seu = ScaleData(seu, do.scale = TRUE, verbose = FALSE)
+```
+
+# Seurat reduction (PCA/UMAP)
+### PCA / elbow plot
+```{r pca}
+seu$library = factor(seu$orig.ident, levels = names(colorLib))
+Idents(seu) = "library"
+nPCs = 14
+seu = RunPCA(seu, npcs = 30, seed.use = 42,
+             features = VariableFeatures(object = seu), verbose = FALSE)
+ElbowPlot(seu, ndims = 30)
+```
+
+### UMAP
+```{r umap}
+# seu = RunTSNE(seu, dims = 1:nPCs, tsne.method = "FIt-SNE", 
+#               perplexity = 30, nthreads = nCores, 
+#               fast_tsne_path = "/home/john/bin/fast_tsne", seed.use = 42)
+seu = RunUMAP(seu, dims = 1:nPCs, umap.method = "uwot", 
+              seed.use = 42, verbose = FALSE)
+seu@reductions$umap@cell.embeddings[,1] = 
+  - seu@reductions$umap@cell.embeddings[,1] # Flip UMAP coordinates
+ggOut = DimPlot(seu, cols = colorLib, order = TRUE)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$UMAP_1)) / 
+                      diff(range(ggOut$data$UMAP_2)))
+```
+
+# Seurat clustering
+### Perform clustering and relabel clusters
+```{r clust}
+set.seed(42)
+seu = FindNeighbors(seu, reduction = "pca", dims = 1:nPCs, verbose = FALSE)
+seu = FindClusters(seu, resolution = 0.5, random.seed = 42, verbose = FALSE)
+remapCluster = c("re5","nr4","nr3","pr2","re4","fm1","re1",
+                 "re2","pr1","mix","fm6","re3","fm2","fm4",
+                 "nr1","fm3","nr2","fm5","pr3","nic","re6")
+seu$seurat_clusters = remapCluster[as.numeric(seu$seurat_clusters)]
+seu$seurat_clusters = factor(seu$seurat_clusters, levels = names(colorCluster))
+ggOut = DimPlot(seu, group.by = "seurat_clusters", cols = colorCluster)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$UMAP_1)) / 
+                      diff(range(ggOut$data$UMAP_2)))
+```
+
+### Proportion plots
+```{r prop}
+ggData = data.table(library = seu$library, cluster = seu$seurat_clusters)
+ggData = ggData[!library %in% c("FM","PR","NR")]
+ggData$library = factor(ggData$library, levels = names(colorLib)[4:17])
+# ggData = data.frame(table(ggData$library, ggData$cluster)) # cell number
+ggData = data.frame(prop.table(table(ggData$library, ggData$cluster), 
+                               margin = 2))
+colnames(ggData) = c("library", "cluster", "value")
+ggplot(ggData, aes(cluster, value, fill = library)) +
+  geom_col() + coord_flip() +
+  ylab("Proportion of Cells (%)") + xlab("Clusters") + 
+  scale_x_discrete(limits = rev(levels(ggData$cluster))) +
+  scale_fill_manual(values = colorLib[4:17]) + theme_classic(base_size = 24)
+```
+
+# scanpy diffMap/FDL and PAGA
+### Load scanpy via reticulate and create adata
+```{r scanpy}
+sc <- import("scanpy", convert = FALSE)
+ad <- import("anndata", convert = FALSE)
+scipy <- import(module = 'scipy.sparse', convert = FALSE)
+sp_sparse_csc <- scipy$csc_matrix
+
+adMat = seu@assays$integrated@data
+adMat = sp_sparse_csc(
+  tuple(np_array(adMat@x), np_array(adMat@i), np_array(adMat@p)),
+  shape = tuple(adMat@Dim[1], adMat@Dim[2]))
+adObs = seu@meta.data
+adVar = data.frame(geneName = rownames(seu))
+adObsm = list()
+adObsm[["X_pca"]] = np_array(seu@reductions$pca@cell.embeddings)
+adObsm[["X_umap"]] = np_array(seu@reductions$umap@cell.embeddings)
+adata = ad$AnnData(X = adMat$T, obs = adObs, var = adVar, obsm = dict(adObsm))
+adata$var_names = rownames(seu)
+adata$obs_names = colnames(seu)
+```
+
+### Compute diffusion maps
+```{r diffMap}
+sc$pp$neighbors(adata, n_neighbors = as.integer(30), 
+                n_pcs = as.integer(nPCs), random_state = as.integer(42))
+sc$tl$diffmap(adata, n_comps = as.integer(20))
+oupDR = py_to_r(adata$obsm['X_diffmap'])
+rownames(oupDR) = colnames(seu)
+colnames(oupDR) = paste0("DC_", 0:(20-1))
+oupDR = oupDR[, paste0("DC_", seq(5))]
+oupDR[, c(2:4)] = - oupDR[, c(2:4)] # Flip coordinates
+seu[["diffmap"]] = CreateDimReducObject(embeddings = oupDR, key = "DC_",
+                                        assay = DefaultAssay(seu))
+ggOut = DimPlot(seu, reduction = "diffmap", order = TRUE,
+                group.by = "library", cols = colorLib)
+ggOut + coord_fixed(ratio = diff(range(ggOut$data$DC_1)) / 
+                      diff(range(ggOut$data$DC_2)))
+```
+
+### Compute FDL
+```{r fdl}
+sc$tl$paga(adata, groups = "seurat_clusters")    # Use Seurat clusters
+sc$pl$paga(adata, layout = "fa", plot = FALSE,
+           random_state = as.integer(42))
+sc$tl$draw_graph(adata, layout = "fa", init_pos = "X_umap",
+                 n_jobs = as.integer(nCores), random_state = as.integer(42))
+oupDR = py_to_r(adata$obsm['X_draw_graph_fa'])
+rownames(oupDR) = colnames(seu)
+colnames(oupDR) = c("FDL_1","FDL_2")
+oupDR = oupDR / 100000
+seu[["fdl"]] <- CreateDimReducObject(embeddings = oupDR, key = "FDL_",
+                                     assay = DefaultAssay(seu))
+ggOut = DimPlot(seu, reduction = "fdl", order = TRUE,
+                group.by = "library", cols = colorLib)
+ggRatio = diff(range(ggOut$data$FDL_1)) / diff(range(ggOut$data$FDL_2))
+ggOut + coord_fixed(ratio = ggRatio)
+ggOut = DimPlot(seu, reduction = "fdl", group.by = "seurat_clusters", cols = colorCluster)
+ggOut + coord_fixed(ratio = ggRatio)
+```
+
+### Gene expression on FDL
+```{r gene, message=FALSE, fig.height=3}
+# Note that we need to convert geneNames to ensembl IDs
+p1 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = gName2ID["ANPEP"])
+p1 = p1 + ggtitle("ANPEP") + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p2 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = gName2ID["NANOG"])
+p2 = p2 + ggtitle("NANOG") + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p1 + p2
+
+p1 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = gName2ID["ZIC2"])
+p1 = p1 + ggtitle("ZIC2") + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p2 = FeaturePlot(seu, reduction = "fdl", order = TRUE, features = gName2ID["DNMT3L"])
+p2 = p2 + ggtitle("DNMT3L") + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = c("grey85", brewer.pal(9, "OrRd")))
+p1 + p2
+```
+
+### PAGA trajectory inferrence
+```{r paga}
+# Extract PAGA connectivities
+oupPAGA = py_to_r(adata$uns$paga$connectivities$todense())
+oupPAGA[upper.tri(oupPAGA)] = 0
+oupPAGA = data.table(source = levels(seu$seurat_clusters), oupPAGA)
+colnames(oupPAGA) = c("source", levels(seu$seurat_clusters))
+oupPAGA = melt.data.table(oupPAGA, id.vars = "source", 
+                          variable.name = "target", value.name = "weight")
+oupPAGA = oupPAGA[weight > 0.13]       
+
+# Plot PAGA connectivities on FDL
+ggData = data.table(library = seu$library,
+                    cluster = seu$seurat_clusters,
+                    seu@reductions$fdl@cell.embeddings)
+ggData2 = ggData[,.(FDL_1 = mean(FDL_1),
+                    FDL_2 = mean(FDL_2)), by = "cluster"]
+oupPAGA = ggData2[oupPAGA, on = c("cluster" = "source")]
+oupPAGA = ggData2[oupPAGA, on = c("cluster" = "target")]
+colnames(oupPAGA) = c("clustA","FDL1A","FDL2A",
+                      "clustB","FDL1B","FDL2B","weight")
+oupPAGA$plotWeight = oupPAGA$weight * 2
+
+ggplot() +
+  geom_point(data = ggData[order(library)], aes(FDL_1, FDL_2, colour = cluster)) +
+  geom_point(data = ggData2, aes(FDL_1, FDL_2), size = 3, color = "grey20") +
+  geom_segment(data = oupPAGA, aes(x = FDL1A, y = FDL2A,
+                                   xend = FDL1B, yend = FDL2B),
+               color = "grey20", size = oupPAGA$plotWeight) +
+  theme_classic(base_size = 24) + coord_fixed(ratio = ggRatio) + 
+  scale_color_manual(values = colorCluster) +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+```
+
+# Scoring gene signatures
+### Load scoring function
+```{r geneS}
+# Similar to Seurat's AddModuleScore [Tirosh et al, Science (2016)]
+geneScoreSc <- function(geneExpr, genes, nBin = 25, nCtrl = 100, 
+                        rngseed = 42, nCores = 4){
+  # Bin genes by gene expression
+  geneBin = Matrix::rowMeans(geneExpr)
+  geneBin = data.table(geneID = names(geneBin), avgExpr = geneBin)
+  geneBin$binID = cut(geneBin$avgExpr, nBin, labels = FALSE)
+  geneList = genes[genes %in% rownames(geneExpr)]
+  oupScores = do.call(
+    rbind, mclapply(geneList, function(iGene){
+      # Generate control aggregate gene expression
+      set.seed(rngseed)
+      binUse = geneBin[geneID == iGene]$binID
+      nPick = min(nrow(geneBin[binID == binUse]), nCtrl)
+      geneCtrl = sample(geneBin[binID == binUse]$geneID, 
+                        size = nPick, replace = FALSE)
+      # Compute score for each gene
+      tmpOut = data.table(sampleID = colnames(geneExpr),
+                          geneID = iGene, score = geneExpr[iGene,])
+      if(length(geneCtrl) > 1){
+        tmpOut$score = tmpOut$score - Matrix::colMeans(geneExpr[geneCtrl,])
+      } else {
+        tmpOut$score = tmpOut$score - geneExpr[geneCtrl,]
+      }
+      return(tmpOut)
+    }, mc.cores = nCores))
+  oupScores = oupScores[,.(aveScore = mean(score)), by = "sampleID"]
+  oupSc = oupScores$aveScore
+  names(oupSc) = oupScores$sampleID
+  oupSc = oupSc[colnames(geneExpr)]
+  return(oupSc)
+}
+```
+
+### Score defined gene signatures and determine identity
+```{r geneSig}
+for(i in unique(geneSig$module)){
+  seu[[i]] = geneScoreSc(seu@assays[["integrated"]]@data, nCores = nCores,
+                         geneSig[module == i]$geneID)
+}
+oupSign = seu[[unique(geneSig$module)]]
+seu$identity = colnames(oupSign)[apply(oupSign, 1, which.max)]
+seu$identity = factor(seu$identity, levels = unique(geneSig$module))
+ggOut = DimPlot(seu, reduction = "fdl", group.by = "identity", cols = colorIdentity)
+ggOut + coord_fixed(ratio = ggRatio)
+```
+
+### Score TE/EPI/PE signatures
+```{r geneSigPet, message=FALSE, fig.height=3}
+for(i in c("TE","EPI","PE")){
+  seu[[i]] = geneScoreSc(seu@assays[["integrated"]]@data, nCores = nCores,
+                         gName2ID[geneSigPet[type == paste0("ALL-",i)]$geneName])
+}
+p1 = FeaturePlot(seu, reduction = "fdl", features = "TE")
+p1 = p1 + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = rev(brewer.pal(9, "RdYlBu"))[c(1,1:9,9)])
+p2 = FeaturePlot(seu, reduction = "fdl", features = "EPI")
+p2 = p2 + coord_fixed(ratio = ggRatio) + 
+  xlim(range(p1$data$FDL_1)) + ylim(range(p1$data$FDL_2)) +
+  scale_color_gradientn(colors = rev(brewer.pal(9, "RdYlBu"))[c(1,1:9,9)])
+p1 + p2
+```
+
+# Session information
+### Save Seurat object
+```{r save}
+# Flip PCs to be consistent with manuscript
+seu@reductions$pca@cell.embeddings[,c(1,3,4)] = 
+  - seu@reductions$pca@cell.embeddings[,c(1,3,4)]
+saveRDS(seu, file = "data/seu_hrpi.rds")
+```
+
+### Python modules
+```{r pyInfo}
+print(paste0("scanpy: ", sc[["__version__"]]))
+print(paste0("anndata: ", ad[["__version__"]]))
+```
+
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+
