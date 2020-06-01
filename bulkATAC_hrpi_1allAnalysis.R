@@ -1,8 +1,10 @@
-##### Script for analysing bulk ATAC-seq of reprogramming intermediates
+# Script for analysing bulk ATAC-seq of reprogramming intermediate --------
 # Note: all files can be downloaded from http://hrpi.ddnetbio.com/
 # Note: all files are assumed to be in the data folder
 
-### Clear workspace and load libraries
+
+# Load libraries ----------------------------------------------------------
+# Clean workspace and load libraries.
 rm(list=ls())
 library(dplyr)
 library(edgeR)
@@ -41,15 +43,18 @@ library(TxDb.Hsapiens.UCSC.hg19.knownGene)
 # install.packages("xlsx")
 # library("xlsx")
 
-# Define colour palettes
+
+# Define colour palettes --------------------------------------------------
 
 colorMedia = c("black","darkorange","blue","darkolivegreen2","red2","pink2")
 names(colorMedia) = c("D0, 3, 7","Primed","t2iLGoY","5iLAF","NHSM","RSeT")
 shapeTime = c(0,1,2,15,16,17,18)
 names(shapeTime) = c("D0","D3","D7","D13","D21","P3","P10")
 
-# Exploratory Analysis - PCA
-## Import read counts of consensus peak set.
+# Exploratory Analysis - PCA ----------------------------------------------
+
+
+# * Import read counts of consensus peak set. -----------------------------
 
 peak.counts <-
   read.table(file = "data/consensus_peak_set_counts.txt",
@@ -126,8 +131,9 @@ ggplot(pca.plot.annotation, aes(PC1, PC3, color=media, label=timept)) +
   scale_shape_manual(values = c(16,15)) + theme_classic(base_size = 24)
 
 
-## Fuzzy clustering.
-### Aggregate sample counts means and RPKM.
+
+# Fuzzy clustering. -------------------------------------------------------
+
 # Object to use 
 
 peak.counts
@@ -146,6 +152,9 @@ conditions.labels <-
     "P3.*Smith",
     "P10.*Smith"
   )
+
+
+# *Aggregate sample counts means and RPKM. --------------------------------
 
 
 
@@ -218,7 +227,9 @@ core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
 peak.z.scores <- as.data.frame(s.exprSet@assayData$exprs) %>% 
   dplyr::mutate(., PeakID = rownames(.))
 
-# Create a table of high cluster affinity peak containing z-scores and peak details.
+
+# * Create a table of high cluster affinity peak containing z-scor --------
+
 
 high.affinity.peaks.annotated <- dplyr::left_join(peak.z.scores,
                                                   peak.cluster.membership,
@@ -227,7 +238,8 @@ high.affinity.peaks.annotated <- dplyr::left_join(peak.z.scores,
   dplyr::filter(PeakID %in% core.exprSet.peaks.id)
 
 
-### LAST MODIFIED 30/05 use innerjoin!
+### LAST MODIFIED 30/05 use innerjoin to merge annotated clusters and high.affinity.peaks!
+### Switch to markdown!
 
 ## Integrate annotated peaks with cluster information.
 
@@ -1892,3 +1904,118 @@ for (i in c(2, 5, 4, 7, 6, 3, 8)) {
 
 ```
 
+# Motif Enrichment --------------------------------------------------------
+
+
+
+# expressed.combined.top.25.cluster.motifs.annotated$cluster <- factor(expressed.combined.top.25.cluster.motifs.annotated$cluster, 
+#                                                                      levels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5", "Cluster 6", "Cluster 7", "Cluster 8"))
+
+expressed.combined.top.25.cluster.motifs.annotated$cluster <- factor(expressed.combined.top.25.cluster.motifs.annotated$cluster, 
+                                                                     levels = c("Cluster 1", "Cluster 2", "Cluster 5", "Cluster 4", "Cluster 7", "Cluster 6", "Cluster 3", "Cluster 8"))
+
+expressed.combined.top.25.cluster.motifs.annotated$motif <- factor(expressed.combined.top.25.cluster.motifs.annotated$motif, levels = dplyr::arrange(expressed.combined.top.25.cluster.motifs.annotated, cluster)$motif %>% unique())
+
+expressed.combined.top.25.cluster.motifs.annotated.fra2.excl <- dplyr::filter(expressed.combined.top.25.cluster.motifs.annotated, !motif.hs == "FRA2")
+
+save(expressed.combined.top.25.cluster.motifs.annotated.fra2.excl, file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/Material_Shiny_App/expressed.combined.top.25.cluster.motifs.annotated.fra2.excl.Rdata")
+
+top.25.motif.enrichment.ggplot <- ggplot(data = expressed.combined.top.25.cluster.motifs.annotated.fra2.excl, aes(y = cluster, x = motif)) +
+  # geom_point(aes(size = m.Log.P.Value.w, color = target_sequence_percentage)) +
+  geom_point(aes(size = m_target_sequence_percentage_w, color = m.Log.P.Value)) +
+  theme_bw() +
+  # scale_y_discrete(limits = rev(levels(expressed.combined.top.25.cluster.motifs.annotated.fra2.excl$cluster)), labels = rev(c(paste("C", 1:8)))) +
+  scale_y_discrete(limits = rev(levels(expressed.combined.top.25.cluster.motifs.annotated.fra2.excl$cluster))) +
+  # scale_size_discrete(
+  # name = "Motif Enrichment (-logP Value)",
+  # labels = c(
+  # "[100,250]" = "100-250",
+  # "(250,1e+03]" = "250-1,000",
+  # "(1e+03,3e+03]" = "1,000-3,000",
+  # "(3e+03,6e+03]" = "3,000-6,000"
+  # )
+  # ) +
+  scale_size_discrete(
+    name = "Target sequences with motif (%)",
+    labels = c(
+      "[0,0.25]" = "0-25",
+      "(0.25,0.5]" = "25-50",
+      "(0.5,0.75]" = "50-75",
+      "(0.75,1]" = "75-100"
+    )
+  ) +
+  # scale_color_gradient(
+  # name = "Target sequences with motif (%)",
+  # limits = c(0, 1),
+  # low = "darkblue",
+  # high = "darkred"
+  # ) +
+  scale_color_gradient(
+    name = "Motif Enrichment (-logP Value)",
+    limits = c(50, 6000),
+    low = "darkblue",
+    high = "darkred"
+  ) +
+  ylab("Cluster") +
+  xlab("TFs") +
+  # scale_x_discrete(position = "top") +
+  gplot.theme +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text = element_text(size = 8), legend.position = "right", legend.spacing.y = unit(0, "cm")) +
+  guides(color = guide_legend(override.aes = list(keyheight = 1)), size = guide_legend(override.aes = list(keyheight = 1)))
+
+ggsave(
+  plot = top.25.motif.enrichment.ggplot,
+  "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/Figure_PDFs/Figure_ATAC-seq_changing_clusters_motif_enrichment_analysis_resized_reordered_fra2_excl_top_25_TS_size_logP_colour_labels_updated.pdf",
+  height = 10,
+  width = 30,
+  units = "cm",
+  dpi = 200,
+  scale = 1
+)
+
+save(top.25.motif.enrichment.ggplot, file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/Material_Shiny_App/top.25.motif.enrichment.ggplot.Rdata")
+
+# * Code from John --------------------------------------------------------
+
+### 2. Motif enrichment plots
+## A. Overall results
+# IO
+remap = data.table(cluster = paste0("Cluster ", c(1,2,5,4,7,6,3,8)),
+                   clustPlot = paste0("C", seq(8)))
+load(paste0(jLog$cur, 
+            "0dataBulk/ATAC/expressed.combined.top.25.cluster.motifs.annotated.fra2.excl.Rdata"))
+inpMotif = expressed.combined.top.25.cluster.motifs.annotated.fra2.excl
+rm(expressed.combined.top.25.cluster.motifs.annotated.fra2.excl)
+inpMotif = data.table(inpMotif)
+inpMotif$motifHS = inpMotif$human_symbol
+# Remove duplicated TFs
+dupTF = unique(inpMotif[, c("motif.hs", "motifHS")])
+dupTF = dupTF$motifHS[duplicated(dupTF$motifHS)]
+oupMotif = inpMotif[!(motifHS %in% dupTF)]
+for(i in dupTF){
+  tmp = inpMotif[motifHS == i]
+  tmp = tmp[tmp[, .I[which.max(m.Log.P.Value)], by = c("cluster", "motifHS")]$V1]
+  oupMotif = rbindlist(list(oupMotif, tmp))
+}
+oupMotif = remap[oupMotif, on = "cluster"]
+oupMotif$mLogP = oupMotif$m.Log.P.Value
+oupMotif$target = oupMotif$target_sequence_percentage * 100
+oupMotif$clustPlot = factor(oupMotif$clustPlot, levels = paste0("C", rev(seq(8))))
+oupMotif$motifHS = factor(oupMotif$motifHS,
+                          levels = unique(oupMotif[order(-clustPlot, -mLogP)]$motifHS))
+# Plot!
+ggData = oupMotif
+ggData[target > 50]$target = 50
+ggOut = ggplot(ggData, aes(motifHS, clustPlot, color = mLogP, size = target)) +
+  geom_point() + xlab("Transcription Factor") + ylab("ATAC Cluster") + 
+  scale_size_continuous("Target sequence with motif (%)", 
+                        range = c(0, 5.5), limits = c(0, 50), 
+                        breaks = c(0, 25, 50), 
+                        labels = c("0", "25", ">50")) +
+  scale_color_gradientn("-log (Enrichment P-value)", limits = c(50, 6000),
+                        breaks = c(0, 2000, 4000, 6000), 
+                        colours = c("darkblue", "darkred")) +
+  guides(color = guide_colorbar(barwidth = 15, barheight = 1)) +
+  jtheme(Xang = 45, XjusH = 1, XjusV = 1, YjusH = 1, Xsiz = 11,
+         Lpos = "bottom", theme = "grid") +
+  theme(axis.text.x = element_text(size = 11, face = "bold"))
