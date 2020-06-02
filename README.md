@@ -21,7 +21,7 @@ Reference: TBC
 ## bulk level analysis
 * `bkRNA_1allAnalysis.Rmd`: Rmarkdown for analysing bulk RNA-seq of reprogramming intermediates [(click here for compiled html)](https://htmlpreview.github.io/?https://github.com/SGDDNB/hrpi/blob/master/bkRNA_1allAnalysis.html)
 
-* `bkATAC_1allAnalysis.Rmd`: Rmarkdown for analysing bulk RNA-seq of reprogramming intermediates [(click here for compiled html)](https://htmlpreview.github.io/?https://github.com/SGDDNB/hrpi/blob/master/bkATAC_1allAnalysis.html)
+* `bkATAC_1allAnalysis.Rmd`: Rmarkdown for analysing bulk ATAC-seq of reprogramming intermediates [(click here for compiled html)](https://htmlpreview.github.io/?https://github.com/SGDDNB/hrpi/blob/master/bkATAC_1allAnalysis.html)
 
 * `tscRNA_1allAnalysis.Rmd`: Rmarkdown for analysing bulk RNA-seq of iTSC-related samples [(click here for compiled html)](https://htmlpreview.github.io/?https://github.com/SGDDNB/hrpi/blob/master/tscRNA_1allAnalysis.html)
 
