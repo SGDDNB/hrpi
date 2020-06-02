@@ -11,13 +11,14 @@ output:
     toc_float: 
       collapsed: false
 fontsize: 12pt
-pagetitle: "bkRNA"
+pagetitle: "bkATAC"
 ---
 
 # Preamble
 ## Things to note
 - All input files can be downloaded from http://hrpi.ddnetbio.com/
 - All input files are assumed to be in the data folder
+- All genome browser tracks can be explored at http://hrpi.ddnetbio.com at the _bulk ATAC-seq iPSC reprog. section_.
 
 ## Load required libraries.
 
@@ -137,8 +138,8 @@ ggplot(pca.plot.annotation, aes(PC1, PC3, color = media, label = timept)) +
 ```
 
 # Fuzzy clustering.
-## Aggregate sample counts means and calculate RPKM.
 
+## Aggregate sample counts means and calculate RPKM.
 
 ```{r aggregate_sample_counts_rpkm}
 # Prepare conditions labels.
@@ -158,6 +159,7 @@ conditions.labels <-
   "P10.*Smith"
   )
 
+# Aggregate peak counts.
 aggregated.peak.counts <-
   sapply(conditions.labels, function(x)
     rowSums(peak.counts[, grep(x,
@@ -167,11 +169,17 @@ aggregated.peak.counts <-
 colnames(aggregated.peak.counts) <-
   colnames(aggregated.peak.counts) %>% gsub("\\.\\*", "_", .)
 
+```
+## Quantile normalise log2(RPKM + 1)
+
+```{r aggregated_counts_fpkm_log2}
+
 aggregated.peak.fpkm <-
   rpkm(aggregated.peak.counts,
        log = F,
        gene.length = peak.counts$Length)
 
+# Keep peaks with more than 10 FPKMs in any condition.
 
 aggregated.keep <- rowSums(aggregated.peak.fpkm > 10) >= 1
 
@@ -180,3 +188,80 @@ aggregated.peak.fpkm <- log2(aggregated.peak.fpkm + 1)
 aggregated.peak.fpkm <- normalizeQuantiles(aggregated.peak.fpkm)
 
 ```
+
+## Discard low coefficient of variation peaks.
+
+```{r cv_20_peaks}
+cv.20 <- apply(aggregated.peak.fpkm, 1, function(x) cv(x) * 100) > 20
+cv.20 %>% table()
+
+aggregated.peak.fpkm.high.cv <- aggregated.peak.fpkm[cv.20, ]
+```
+
+## Run fuzzy clustering.
+```{r fuzzy_clustering}
+
+exprSet <- ExpressionSet(assayData = aggregated.peak.fpkm.high.cv)
+
+s.exprSet <- standardise(exprSet)
+
+m <- mestimate(s.exprSet)
+
+set.seed(1234)
+cl.s.exprSet <- mfuzz(s.exprSet, c = 8, m = m)
+
+# Retrieve peak cluster membership
+
+peak.cluster.membership <- as.data.frame(cl.s.exprSet$cluster) %>% 
+  dplyr::mutate(PeakID = rownames(.))
+colnames(peak.cluster.membership)[1] <- "Cluster"
+
+```
+### Filter high affinity peaks.
+
+```{r core_peaks}
+
+core.exprSet <- acore(s.exprSet,
+                      cl = cl.s.exprSet,
+                      min.acore = 0.8)
+
+# Peak ids of high affinity peaks
+core.exprSet.peaks.id <- sapply(c(1:8), function(x) as.vector(core.exprSet[[x]]$NAME)
+)
+core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
+
+```
+
+## Create a table of high cluster affinity peaks.
+It contains z-scores and peak details.
+
+```{r}
+
+# Peak z-scores
+
+peak.z.scores <- as.data.frame(s.exprSet@assayData$exprs) %>% 
+  dplyr::mutate(., PeakID = rownames(.))
+
+# Table of high affinity peaks annotated.
+high.affinity.peaks.annotated <- dplyr::left_join(peak.z.scores,
+                                                  peak.cluster.membership,
+                                                  by = "PeakID") %>%
+  dplyr::left_join(peak.counts[, 1:6], by = "PeakID") %>%
+  dplyr::filter(PeakID %in% core.exprSet.peaks.id)
+
+```
+
+# Plots cluster dynamics (mean +/- SD).
+Please note that for the benefit of biological flow clusters have been relabeled as follows and has been indicated as Cluster_Labels accross the manuscript, source data and supplementary tables.
+1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8".
+
+## High affinity cluster membership counts
+```{r}
+
+core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
+  unlist() %>% as.data.frame() %>% 
+  mutate(Cluster = c(1:8))
+
+colnames(core.exprSet.cluster.counts)[1] <- "members"
+```
+
