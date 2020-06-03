@@ -18,7 +18,7 @@ pagetitle: "bkATAC"
 ## Things to note
 - All input files can be downloaded from http://hrpi.ddnetbio.com/
 - All input files are assumed to be in the data folder.
-- For reproducibility purposes, the randomisation seed used throughout the manuscript was saved as an object and it should be loaded in all relevant sections (object loaded in code section).
+- For reproducibility purposes, the randomisation seed used throughout the manuscript was saved as an object and it should be loaded in all relevant sections (object `seed` in `data/seed.Rdata`loaded in each section's code).
 - All genome browser tracks can be explored at http://hrpi.ddnetbio.com at the _bulk ATAC-seq iPSC reprog. section_.
 
 ## Load required libraries.
@@ -263,8 +263,8 @@ core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
 
 ## Create a table of high cluster affinity peaks.
 It contains z-scores and peak details.
-Please note that for the benefit of biological flow clusters have been relabeled as follows and has been indicated as Cluster_Labels accross the manuscript, source data and supplementary tables.
-1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8".
+Please note that for the benefit of biological flow, clusters have been relabeled as follows: 1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8". This has also been indicated as `Cluster_Labels` accross the manuscript's source data and supplementary tables.
+.
 
 ```{r high_affinity_peaks_z-s}
 
@@ -397,7 +397,7 @@ cluster.dynamics.plot.values$Cluster_Label  <-
 ```
 ### Cluster dynamics plot.
 Ribbon equals mean +/- SD.
-```{r cluster_dynamics_plot}
+```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5}
 
 ggplot(data = NULL, aes(stage, mean, group = 1)) +
   geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM")), color = "#FF8C00", size = 0.5) +
