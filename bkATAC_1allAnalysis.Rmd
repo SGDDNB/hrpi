@@ -400,20 +400,100 @@ Ribbon equals mean +/- SD.
 ```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5}
 
 ggplot(data = NULL, aes(stage, mean, group = 1)) +
-  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM")), color = "#FF8C00", size = 0.5) +
-  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D0", "D3", "D7")), color = "black", size = 0.5) +
-  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D0", "D3", "D7")),
-              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "black", alpha = 0.5) +
-  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D7","D13", "D21", "P3", "P10")),
-              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "#FF8C00", alpha = 0.5) +
-  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM")), color = "#2302FE", size = 0.5) +
-  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D7", "D13", "D21", "P3", "P10")), color = "#2302FE", size = 0.5) +
-  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D0", "D3", "D7")), color = "black", size = 0.5) +
-    geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D0", "D3", "D7")),
-              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "black", alpha = 0.5) +
-  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM","NM"), stage %in% c("D7","D13", "D21", "P3", "P10")),
-              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "#2302FE", alpha = 0.5) +
-  facet_wrap(~ Cluster_Label, nrow = 4, ncol = 2) +
+  geom_line(
+  data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM")),
+  color = "#FF8C00",
+  size = 0.5
+  ) +
+  geom_line(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "PM"),
+  stage %in% c("D0", "D3", "D7")
+  ),
+  color = "black",
+  size = 0.5
+  ) +
+  geom_ribbon(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "PM"),
+  stage %in% c("D0", "D3", "D7")
+  ),
+  aes(
+  x = stage,
+  ymax = mean + sd,
+  ymin = mean - sd
+  ),
+  fill = "black",
+  alpha = 0.5
+  ) +
+  geom_ribbon(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "PM"),
+  stage %in% c("D7", "D13", "D21", "P3", "P10")
+  ),
+  aes(
+  x = stage,
+  ymax = mean + sd,
+  ymin = mean - sd
+  ),
+  fill = "#FF8C00",
+  alpha = 0.5
+  ) +
+  geom_line(
+  data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM")),
+  color = "#2302FE",
+  size = 0.5
+  ) +
+  geom_line(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "NM"),
+  stage %in% c("D7", "D13", "D21", "P3", "P10")
+  ),
+  color = "#2302FE",
+  size = 0.5
+  ) +
+  geom_line(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "NM"),
+  stage %in% c("D0", "D3", "D7")
+  ),
+  color = "black",
+  size = 0.5
+  ) +
+  geom_ribbon(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "NM"),
+  stage %in% c("D0", "D3", "D7")
+  ),
+  aes(
+  x = stage,
+  ymax = mean + sd,
+  ymin = mean - sd
+  ),
+  fill = "black",
+  alpha = 0.5
+  ) +
+  geom_ribbon(
+  data = dplyr::filter(
+  cluster.dynamics.plot.values,
+  media %in% c("FM", "NM"),
+  stage %in% c("D7", "D13", "D21", "P3", "P10")
+  ),
+  aes(
+  x = stage,
+  ymax = mean + sd,
+  ymin = mean - sd
+  ),
+  fill = "#2302FE",
+  alpha = 0.5
+  ) +
+  facet_wrap( ~ Cluster_Label, nrow = 4, ncol = 2) +
   gplot.theme + theme(legend.position = "none", axis.title = element_blank())
 
 ```
