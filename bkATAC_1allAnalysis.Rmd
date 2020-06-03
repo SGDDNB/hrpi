@@ -17,7 +17,8 @@ pagetitle: "bkATAC"
 # Preamble
 ## Things to note
 - All input files can be downloaded from http://hrpi.ddnetbio.com/
-- All input files are assumed to be in the data folder
+- All input files are assumed to be in the data folder.
+- For reproducibility purposes, the randomisation seed used throughout the manuscript was saved as an object and it should be loaded in all relevant sections (object loaded in code section).
 - All genome browser tracks can be explored at http://hrpi.ddnetbio.com at the _bulk ATAC-seq iPSC reprog. section_.
 
 ## Load required libraries.
@@ -32,6 +33,7 @@ library(patchwork)
 library(data.table)
 library(ggplot2)
 library(ggrepel)
+library(knitr)
 # rm(list=ls())
 ```
 ## Define colour palettes.
@@ -42,6 +44,23 @@ colorMedia = c("black","darkorange","blue","darkolivegreen2","red2","pink2")
 names(colorMedia) = c("D0, 3, 7","Primed","t2iLGoY","5iLAF","NHSM","RSeT")
 shapeTime = c(0,1,2,15,16,17,18)
 names(shapeTime) = c("D0","D3","D7","D13","D21","P3","P10")
+
+gplot.theme <- theme(panel.border=element_blank(), 
+        panel.background=element_blank(),
+        axis.line=element_line(),
+        axis.line.y=element_line("black", size=1),
+        axis.line.x=element_line("black", size=1),
+        axis.text=(element_text(colour="black", size = 6, face="bold")),
+        axis.title=(element_text(colour="black", size = 8, face="bold")),
+        axis.ticks = (element_line("black", size=0.5)),
+        legend.title = element_text(colour="black", size = 9, face="bold"),
+        legend.text = element_text(colour="black", size= 8, face="bold"),
+        legend.key.size=unit(0.1,"cm"),
+        # legend.margin = unit(0, "cm"),
+        legend.position="none",
+        plot.margin=unit(c(0,2,0,0),"mm"),
+        strip.text.x = element_text(size = 6, colour = "black", face = "bold", margin = margin(0,0,0,0, "cm"))
+  )
 ```
 
 # Exploratory Analysis - PCA.
@@ -117,7 +136,8 @@ pca.plot.annotation$timept = tstrsplit(pca.plot.annotation$sample_labels, "_")[[
 pca.plot.annotation$timept = factor(pca.plot.annotation$timept, 
                             levels = unique(pca.plot.annotation$timept))
 
-set.seed(1234)
+load("../data/seed.Rdata")
+.Random.seed <- seed
 pca <- prcomp_irlba(t(peaks.fpkm))
 
 pca.plot.annotation$PC1 = pca$x[,1]
@@ -196,9 +216,11 @@ cv.20 <- apply(aggregated.peak.fpkm, 1, function(x) cv(x) * 100) > 20
 cv.20 %>% table()
 
 aggregated.peak.fpkm.high.cv <- aggregated.peak.fpkm[cv.20, ]
+
 ```
 
 ## Run fuzzy clustering.
+
 ```{r fuzzy_clustering}
 
 exprSet <- ExpressionSet(assayData = aggregated.peak.fpkm.high.cv)
@@ -206,9 +228,16 @@ exprSet <- ExpressionSet(assayData = aggregated.peak.fpkm.high.cv)
 s.exprSet <- standardise(exprSet)
 
 m <- mestimate(s.exprSet)
+# Create seed as save it as an object.
+# set.seed(1234)
+# seed <- .Random.seed
+# save(seed, file = "../data/seed.Rdata")
 
-set.seed(1234)
+load("../data/seed.Rdata")
+.Random.seed <- seed
+
 cl.s.exprSet <- mfuzz(s.exprSet, c = 8, m = m)
+
 
 # Retrieve peak cluster membership
 
@@ -234,8 +263,10 @@ core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
 
 ## Create a table of high cluster affinity peaks.
 It contains z-scores and peak details.
+Please note that for the benefit of biological flow clusters have been relabeled as follows and has been indicated as Cluster_Labels accross the manuscript, source data and supplementary tables.
+1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8".
 
-```{r}
+```{r high_affinity_peaks_z-s}
 
 # Peak z-scores
 
@@ -249,19 +280,141 @@ high.affinity.peaks.annotated <- dplyr::left_join(peak.z.scores,
   dplyr::left_join(peak.counts[, 1:6], by = "PeakID") %>%
   dplyr::filter(PeakID %in% core.exprSet.peaks.id)
 
+high.affinity.peaks.annotated <-
+  high.affinity.peaks.annotated %>% mutate(
+  Cluster_Label = case_when(
+  Cluster == "1" ~ "C 1",
+  Cluster == "2" ~ "C 2",
+  Cluster == "3" ~ "C 7",
+  Cluster == "4" ~ "C 4",
+  Cluster == "5" ~ "C 3",
+  Cluster == "6" ~ "C 6",
+  Cluster == "7" ~ "C 5",
+  TRUE ~ "C 8"
+  )
+  )
+  
 ```
 
-# Plots cluster dynamics (mean +/- SD).
-Please note that for the benefit of biological flow clusters have been relabeled as follows and has been indicated as Cluster_Labels accross the manuscript, source data and supplementary tables.
-1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8".
+## Cluster dynamics (mean +/- SD).
 
-## High affinity cluster membership counts
-```{r}
+### High affinity cluster membership counts table.
+```{r membership_counts}
 
 core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
   unlist() %>% as.data.frame() %>% 
   mutate(Cluster = c(1:8))
 
 colnames(core.exprSet.cluster.counts)[1] <- "members"
+
+core.exprSet.cluster.counts <-
+  core.exprSet.cluster.counts %>% mutate(
+  Cluster_Label = case_when(
+  Cluster == "1" ~ "C 1",
+  Cluster == "2" ~ "C 2",
+  Cluster == "3" ~ "C 7",
+  Cluster == "4" ~ "C 4",
+  Cluster == "5" ~ "C 3",
+  Cluster == "6" ~ "C 6",
+  Cluster == "7" ~ "C 5",
+  TRUE ~ "C 8"
+  )
+  )
+  
+core.exprSet.cluster.counts$Cluster_Label <- factor(x = core.exprSet.cluster.counts$Cluster_Label,
+                                                    levels = paste("C", 1:8, sep = " "))
+knitr::kable(core.exprSet.cluster.counts %>% select(Cluster_Label, members) %>% arrange(Cluster_Label))
+```
+
+## Cluster dynamics plots.
+
+### Prepare table.
+
+```{r  cluster_dynamics_table}
+high.affinity.peaks.melt <-
+  melt(select(
+  high.affinity.peaks.annotated,
+  -c("Chr", "Start", "End", "Strand", "Length", "Cluster_Label")
+  ),
+  id = c("PeakID", "Cluster"))
+
+# Define stage and media
+
+high.affinity.peaks.melt <-
+  high.affinity.peaks.melt %>% mutate(stage = case_when(
+  grepl("D13", variable) ~ "D13",
+  grepl("D21", variable) ~ "D21",
+  grepl("P3", variable) ~ "P3",
+  grepl("P10", variable) ~ "P10",
+  TRUE ~ as.character(variable)
+  )) %>%
+  mutate(media = case_when(
+  grepl("D0|D3|D7", variable) ~ "FM",
+  grepl("Smith", variable) ~ "NM",
+  grepl("Primed", variable) ~ "PM"
+  ))
+  
+# Order Stages                                                          
+high.affinity.peaks.melt$stage <-
+  factor(high.affinity.peaks.melt$stage,
+  levels = c("D0", "D3", "D7", "D13", "D21", "P3", "P10"))
+  
+# Order Clusters
+high.affinity.peaks.melt$Cluster <-
+  factor(high.affinity.peaks.melt$Cluster, levels = c(1, 2, 5, 4, 7, 6, 3, 8))
+
+
+
+cluster.dynamics.plot.values <-
+  high.affinity.peaks.melt %>% group_by(media, stage, Cluster) %>% summarise(
+  mean = mean(value),
+  sd = sd(value)
+  )
+  
+# Define Cluster labels (please see comment above)
+
+cluster.dynamics.plot.values <-
+  cluster.dynamics.plot.values %>% mutate(
+  Cluster_Label = case_when(
+  Cluster == "1" ~ "C 1",
+  Cluster == "2" ~ "C 2",
+  Cluster == "3" ~ "C 7",
+  Cluster == "4" ~ "C 4",
+  Cluster == "5" ~ "C 3",
+  Cluster == "6" ~ "C 6",
+  Cluster == "7" ~ "C 5",
+  TRUE ~ "C 8"
+  )
+  )
+
+cluster.dynamics.plot.values$Cluster_Label  <-
+  factor(
+  x = cluster.dynamics.plot.values$Cluster_Label,
+  levels = c("C 1", "C 2", "C 3", "C 4", "C 5", "C 6", "C 7", "C 8")
+  )
+
+
+```
+### Cluster dynamics plot.
+Ribbon equals mean +/- SD.
+```{r cluster_dynamics_plot}
+
+ggplot(data = NULL, aes(stage, mean, group = 1)) +
+  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM")), color = "#FF8C00", size = 0.5) +
+  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D0", "D3", "D7")), color = "black", size = 0.5) +
+  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D0", "D3", "D7")),
+              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "black", alpha = 0.5) +
+  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "PM"), stage %in% c("D7","D13", "D21", "P3", "P10")),
+              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "#FF8C00", alpha = 0.5) +
+  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM")), color = "#2302FE", size = 0.5) +
+  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D7", "D13", "D21", "P3", "P10")), color = "#2302FE", size = 0.5) +
+  geom_line(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D0", "D3", "D7")), color = "black", size = 0.5) +
+    geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM", "NM"), stage %in% c("D0", "D3", "D7")),
+              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "black", alpha = 0.5) +
+  geom_ribbon(data = dplyr::filter(cluster.dynamics.plot.values, media %in% c("FM","NM"), stage %in% c("D7","D13", "D21", "P3", "P10")),
+              aes(x = stage, ymax = mean + sd, ymin = mean - sd), fill = "#2302FE", alpha = 0.5) +
+  facet_wrap(~ Cluster_Label, nrow = 4, ncol = 2) +
+  gplot.theme + theme(legend.position = "none", axis.title = element_blank())
+
 ```
 
