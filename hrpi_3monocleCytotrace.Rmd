@@ -1,0 +1,269 @@
+---
+title: | 
+  | Script for Monocle 3 and CytoTRACE on integrated sn/scRNA-seq
+author: |
+  | John F. Ouyang
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+      collapsed: false
+fontsize: 12pt
+pagetitle: "hrpi3"
+---
+
+# Preamble
+### Things to note
+- All input files can be downloaded from http://hrpi.ddnetbio.com/
+- The Seurat object from hrpi_1main is also required
+- All input files are assumed to be in the data folder
+
+### Clear workspace and load libraries
+```{r setup}
+rm(list=ls())
+library(data.table)
+library(Matrix)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(parallel)
+library(monocle3)
+library(CytoTRACE)
+```
+
+### Define colour palettes and gene signatures
+```{r define}
+colorLib = c("darkseagreen","red","purple","grey10","grey30","grey50",
+             "#EEDD82","#F6AF64","#FF8247","#C46323","#8B4500",
+             "#ADD8E6","#6C95E3","#3353E7","#0C14F9","#0000CC","#000080")
+names(colorLib) = c("FM","PR","NR","D0-fm","D4-fm","D8-fm",
+                    "D12-pr","D16-pr","D20-pr","D24-pr","P20-pr", 
+                    "D12-nr","D16-nr","D20-nr","D24-nr","P3-nr","P20-nr")
+# metadata from integrated sn/scRNA-seq
+intColData = fread("data/hrpi_colData_suppTable01.tab")  
+intColData$library = factor(intColData$library, levels = names(colorLib))
+nCores = 30
+```
+
+# IO
+### Read in Seurat object from hrpi_1main
+```{r io}
+# Read in Seurat
+seu = readRDS("data/seu_hrpi.rds")
+
+# Ensembl ID to geneName mapping
+inpGen1 = fread("data/hrpiSN_features.tsv.gz", header = FALSE)
+inpGen2 = fread("data/hrpiSC_features.tsv.gz", header = FALSE)
+gID2name = inpGen1$V2; names(gID2name) = inpGen1$V1
+gID2name = gID2name[rownames(seu)]
+gName2ID = names(gID2name); names(gName2ID) = gID2name
+```
+
+# CytoTRACE
+### Run CytoTRACE
+```{r cytotrace}
+if(file.exists("data/hrpi3_cytotrace.rds")){
+  # Use existing cytoTrace object
+  oupCyto = readRDS("data/hrpi3_cytotrace.rds")
+} else {
+  # Otherwise, run again...
+  inpData = list(as.matrix(inpMtx1), as.matrix(inpMtx2))
+  oupCyto = iCytoTRACE(inpData)
+  saveRDS(oupCyto, file = "data/hrpi3_cytotrace.rds")
+}
+```
+
+### Plot CytoTRACE results on FDL
+```{r cytoFDL, fig.height=6}
+# Check that it matches supp Table
+tmp1 = oupCyto$CytoTRACE[intColData$sampleID]
+names(tmp1) = NULL
+all.equal(intColData$cytoTRACE, tmp1)
+
+# Plot on FDL
+cytoColor = rev(brewer.pal(11, "Spectral")) # Reproduce cytoTRACE colours
+cytoColor[6] = "gold"
+ggData = data.table(FDL1 = intColData$FDL1, FDL2 = intColData$FDL2,
+                    cytoTRACE = tmp1)
+ggplot(ggData, aes(FDL1, FDL2, color = cytoTRACE)) +
+  geom_point(size = 0.5) + theme_classic(base_size = 24) +
+  scale_color_gradientn(colors = colorRampPalette(cytoColor)(50)) +
+  coord_fixed(ratio = diff(range(ggData$FDL1)) / diff(range(ggData$FDL2)))
+```
+
+# Monocle3
+### Create CDS object and insert FDL coordinates
+```{r cds}
+# Prepare meta data and create cds object
+tmp1 = as.data.frame(intColData)
+rownames(tmp1) = intColData$sampleID
+tmp2 = data.frame(geneID = names(gID2name),
+                  gene_short_name = gID2name)
+rownames(tmp2) = names(gID2name)
+cds = seu@assays[["integrated"]]@data[VariableFeatures(seu),]
+cds = new_cell_data_set(cds, cell_metadata = tmp1[colnames(cds), ],
+                        gene_metadata = tmp2[rownames(cds), ])
+
+# Insert FDL into cds
+inpFDL = as.matrix(intColData[, c("FDL1", "FDL2")])
+colnames(inpFDL) = NULL
+rownames(inpFDL) = intColData$sampleID
+inpFDL = inpFDL[colnames(cds), ]
+cds@reducedDims@listData[["UMAP"]] = inpFDL
+```
+
+### Calculate FDL-based Monocle3 trajectories
+```{r mono3traj}
+# Cluster cells and learn graph
+# Note that we use "UMAP" here when it is actually our FDL coordinates
+cds = cluster_cells(cds, reduction_method = "UMAP",
+                    k = 30, random_seed = 42)
+cds = learn_graph(cds, use_partition = TRUE, close_loop = TRUE)
+
+### Find root cell
+# A. Compute FDL centroids for all clusters other than fm1
+clustCentroid = matrix(0, nrow = uniqueN(intColData$auto),
+                       ncol = 2)       # Compute cluster centroids
+colnames(clustCentroid) = c("FDL1", "FDL2")
+rownames(clustCentroid) = c(paste0("fm",seq(6)), "mix", paste0("pr",seq(3)),
+                            paste0("nr",seq(4)), "nic", paste0("re",seq(6)))
+for(i in rownames(clustCentroid)){
+  clustCentroid[i,] = colMeans(inpFDL[intColData[auto == i]$sampleID, ])
+}
+clustCentroid = clustCentroid[-1,]
+
+# B. Calculate distance between all fm1 cells and FDL centroids
+fm1fdl = inpFDL[intColData[auto == "fm1"]$sampleID, ]
+fdldist = outer(seq(nrow(fm1fdl)), seq(nrow(clustCentroid)),
+                Vectorize(function(i, j) dist(rbind(fm1fdl[i,],
+                                                    clustCentroid[j,]))))
+rownames(fdldist) = rownames(fm1fdl)
+
+# C. Pick root cell as the one furthest from all FDL centroids
+cdsRoot = names(which.max(apply(fdldist, 1, sum)))
+
+# order_cells
+cds = order_cells(cds, reduction_method = "UMAP", root_cells = cdsRoot)
+```
+
+### Plot Monocle3 trajectory with libraries
+```{r mono3lib, fig.height=7}
+cds = cds[, intColData$sampleID]
+ggRatio = diff(range(intColData$FDL1)) / diff(range(intColData$FDL2))
+ggOut = plot_cells(
+  cds, color_cells_by = "library", cell_size = 0.5,
+  show_trajectory_graph = TRUE, trajectory_graph_color = "grey95",
+  graph_label_size = 1.5, trajectory_graph_segment_size = 1,
+  label_cell_groups = FALSE, label_groups_by_cluster = FALSE) +
+  xlab("FDL1") + ylab("FDL2") + coord_fixed(ratio = ggRatio) +
+  scale_color_manual("library", values = colorLib) + 
+  theme_classic(base_size = 24) + 
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(override.aes = list(size = 5), ncol = 4))
+ggOut[["layers"]][[8]] = NULL  # Remove text labels on nodes
+ggOut[["layers"]][[6]] = NULL
+ggOut[["layers"]][[4]] = NULL
+ggOut
+```
+
+
+### Plot Monocle3 trajectory with cytoTRACE
+```{r mono3cyto, fig.height=5.5}
+ggOut = plot_cells(
+  cds, color_cells_by = "cytoTRACE", cell_size = 0.5,
+  show_trajectory_graph = TRUE, trajectory_graph_color = "grey25",
+  graph_label_size = 1, trajectory_graph_segment_size = 1,
+  label_cell_groups = FALSE, label_groups_by_cluster = FALSE) +
+  xlab("FDL1") + ylab("FDL2") + coord_fixed(ratio = ggRatio) +
+  scale_color_gradientn("cytoTRACE", colors = colorRampPalette(cytoColor)(50)) +
+  theme_classic(base_size = 24)
+ggOut[["layers"]][[8]] = NULL  # Remove text labels on nodes
+ggOut[["layers"]][[6]] = NULL
+ggOut[["layers"]][[4]] = NULL
+ggOut
+```
+
+# Cell cycle
+### Load scoring function
+```{r geneS}
+# Similar to Seurat's AddModuleScore [Tirosh et al, Science (2016)]
+geneScoreSc <- function(geneExpr, genes, nBin = 25, nCtrl = 100, 
+                        rngseed = 42, nCores = 4){
+  # Bin genes by gene expression
+  geneBin = Matrix::rowMeans(geneExpr)
+  geneBin = data.table(geneID = names(geneBin), avgExpr = geneBin)
+  geneBin$binID = cut(geneBin$avgExpr, nBin, labels = FALSE)
+  geneList = genes[genes %in% rownames(geneExpr)]
+  oupScores = do.call(
+    rbind, mclapply(geneList, function(iGene){
+      # Generate control aggregate gene expression
+      set.seed(rngseed)
+      binUse = geneBin[geneID == iGene]$binID
+      nPick = min(nrow(geneBin[binID == binUse]), nCtrl)
+      geneCtrl = sample(geneBin[binID == binUse]$geneID, 
+                        size = nPick, replace = FALSE)
+      # Compute score for each gene
+      tmpOut = data.table(sampleID = colnames(geneExpr),
+                          geneID = iGene, score = geneExpr[iGene,])
+      if(length(geneCtrl) > 1){
+        tmpOut$score = tmpOut$score - Matrix::colMeans(geneExpr[geneCtrl,])
+      } else {
+        tmpOut$score = tmpOut$score - geneExpr[geneCtrl,]
+      }
+      return(tmpOut)
+    }, mc.cores = nCores))
+  oupScores = oupScores[,.(aveScore = mean(score)), by = "sampleID"]
+  oupSc = oupScores$aveScore
+  names(oupSc) = oupScores$sampleID
+  oupSc = oupSc[colnames(geneExpr)]
+  return(oupSc)
+}
+```
+
+### Predict cell cycle phase
+```{r ccphase}
+# S and G2M genes
+ccGeneS = c("ENSG00000156802","ENSG00000197299","ENSG00000136492","ENSG00000118412","ENSG00000175305","ENSG00000093009","ENSG00000094804","ENSG00000144354","ENSG00000159259","ENSG00000092853","ENSG00000136982","ENSG00000143476","ENSG00000129173","ENSG00000174371","ENSG00000168496","ENSG00000131153","ENSG00000112312","ENSG00000119969","ENSG00000073111","ENSG00000104738","ENSG00000100297","ENSG00000076003","ENSG00000095002","ENSG00000132780","ENSG00000132646","ENSG00000101868","ENSG00000077514","ENSG00000198056","ENSG00000051180","ENSG00000111247","ENSG00000049541","ENSG00000117748","ENSG00000167325","ENSG00000171848","ENSG00000163950","ENSG00000075131","ENSG00000176890","ENSG00000012963","ENSG00000276043","ENSG00000076248","ENSG00000162607","ENSG00000092470","ENSG00000151725")
+ccGeneG2M = c("ENSG00000011426","ENSG00000143401","ENSG00000087586","ENSG00000178999","ENSG00000089685","ENSG00000169679","ENSG00000094916","ENSG00000157456","ENSG00000117399","ENSG00000158402","ENSG00000184661","ENSG00000111665","ENSG00000134690","ENSG00000170312","ENSG00000115163","ENSG00000138778","ENSG00000117724","ENSG00000136108","ENSG00000169607","ENSG00000175216","ENSG00000173207","ENSG00000123975","ENSG00000102974","ENSG00000126787","ENSG00000114346","ENSG00000092140","ENSG00000139354","ENSG00000075218","ENSG00000123485","ENSG00000164104","ENSG00000072571","ENSG00000138160","ENSG00000138182","ENSG00000137807","ENSG00000142945","ENSG00000143815","ENSG00000148773","ENSG00000010292","ENSG00000080986","ENSG00000117650","ENSG00000143228","ENSG00000137804","ENSG00000134222","ENSG00000100401","ENSG00000113810","ENSG00000013810","ENSG00000120802","ENSG00000131747","ENSG00000088325","ENSG00000112742","ENSG00000188229","ENSG00000175063","ENSG00000129195","ENSG00000189159")
+
+# Calculate for snRNA non-integrated expression
+geneExpr = seu@assays$RNA@data[inpGen1$V1, intColData[assay == "snRNA"]$sampleID]
+ccSN = data.table(sampleID = colnames(geneExpr),
+                  Sscore = geneScoreSc(geneExpr, nCores = nCores, ccGeneS),
+                  G2Mscore = geneScoreSc(geneExpr, nCores = nCores, ccGeneG2M))
+
+# Calculate for scRNA non-integrated expression
+geneExpr = seu@assays$RNA@data[inpGen2$V1, intColData[assay == "scRNA"]$sampleID]
+ccSC = data.table(sampleID = colnames(geneExpr),
+                  Sscore = geneScoreSc(geneExpr, nCores = nCores, ccGeneS),
+                  G2Mscore = geneScoreSc(geneExpr, nCores = nCores, ccGeneG2M))
+
+# Predict cell cycle phase and check that they match supp table
+ccAll = rbindlist(list(ccSC, ccSN))
+ccAll$phase = "G2M"
+ccAll[Sscore > G2Mscore]$phase = "S"
+ccAll[Sscore < 0 & G2Mscore < 0]$phase = "G1"
+all.equal(intColData$phase, ccAll$phase)
+```
+
+### Plot cell cycle phase on FDL
+```{r plotcc}
+intColData$phase = factor(intColData$phase, levels = c("G1", "S", "G2M"))
+ggplot(intColData, aes(FDL1, FDL2, color = phase)) +
+  geom_point(size = 0.5) + scale_color_manual(values = c("grey20", "orange", "seagreen")) +
+  theme_classic(base_size = 24) + 
+  coord_fixed(ratio = diff(range(intColData$FDL1)) / 
+                diff(range(intColData$FDL2))) + 
+  guides(color = guide_legend(override.aes = list(size = 5)))
+```
+
+# Session information
+### R 
+```{r sessInfo}
+sessionInfo()
+```
+
+
