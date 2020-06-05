@@ -69,9 +69,9 @@ gplot.theme <- theme(panel.border=element_blank(),
 # Exploratory Analysis - PCA.
 ## Import read counts of consensus peak set.
 ```{r import_read_counts}
-setwd("~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/scripts/github")
+
 peak.counts <-
-  read.table(file = "data/bkATAC_consensus_peak_set_counts.txt",
+  read.table(file = "../data/bkATAC_consensus_peak_set_counts.txt",
              header = T,
              stringsAsFactors = F)
 ```
@@ -119,6 +119,7 @@ peaks.fpkm <- normalizeQuantiles(peaks.fpkm)
 ## PCA 
 
 ```{r pca}
+
 # Prepare annotation table.
 pca.plot.annotation <- data.table(sample_id = colnames(peaks.fpkm))
 
@@ -139,7 +140,7 @@ pca.plot.annotation$timept = tstrsplit(pca.plot.annotation$sample_labels, "_")[[
 pca.plot.annotation$timept = factor(pca.plot.annotation$timept, 
                             levels = unique(pca.plot.annotation$timept))
 
-load("../data/seed.Rdata")
+base::load("../data/seed.Rdata")
 .Random.seed <- seed
 pca <- prcomp_irlba(t(peaks.fpkm))
 
@@ -331,7 +332,7 @@ knitr::kable(core.exprSet.cluster.counts %>% select(Cluster_Label, members) %>% 
 
 ## Cluster dynamics plots.
 
-### Prepare table.
+### Table.
 
 ```{r  cluster_dynamics_table}
 high.affinity.peaks.melt <-
@@ -501,14 +502,13 @@ ggplot(data = NULL, aes(stage, mean, group = 1)) +
 
 ```
 
-# Annotated clusters
-## Basic cluster annotation (based on hg19)
+# Basic cluster Annotation (hg19).
 
-```{r basic_hg19_annotation}
+```{r basic_hg19_annotation, message=FALSE, warning=FALSE}
 
 hg19.basic.genes <- c('hg19_basicgenes', 'hg19_genes_intergenic')
 
-hg19.basic <- build_annotations(genome = "hg19", annotations = hg19.basic.genes)
+hg19.basic.genes.annotation <- build_annotations(genome = "hg19", annotations = hg19.basic.genes)
 
 high.affinity.peaks.annotated.granges <-
   makeGRangesFromDataFrame(high.affinity.peaks.annotated,
@@ -517,60 +517,78 @@ high.affinity.peaks.annotated.granges <-
 high.affinity.peaks.annotated.granges <-
   annotate_regions(
   regions = high.affinity.peaks.annotated.granges,
-  annotations = hg19.basic,
+  annotations = hg19.basic.genes.annotation,
   ignore.strand = T,
   quiet = FALSE
   )
-  
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.df <- 
-  data.frame(cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic)
 
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot <- cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.df %>% 
-  dplyr::select(PeakID, Cluster, annot.type) %>% 
-  dplyr::distinct(PeakID, annot.type, .keep_all = T)# %>% 
-  # filter(!annot.type == "hg19_genes_promoters")
+```
 
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs <-
-  cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot %>%
-  group_by(Cluster, annot.type) %>%
+## Basic annotation table.
+
+```{r}
+
+# Annotation type data frame
+
+high.affinity.peaks.annotated.granges.df <-
+  data.frame(high.affinity.peaks.annotated.granges) %>%
+  dplyr::select(PeakID, Cluster_Label, annot.type) %>%
+  dplyr::distinct(PeakID, annot.type, .keep_all = T)#
+
+
+basic.annotation.type.freqs <-
+  high.affinity.peaks.annotated.granges.df %>%
+  group_by(Cluster_Label, annot.type) %>%
   summarise(n = n()) %>%
   mutate(total = sum(n), rel.freq = n / total)
-  
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs$Cluster <-
-  factor(cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs$Cluster, levels = c(1, 2, 5, 4, 7, 6, 3, 8))
 
-cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs.labels <- c("1" = "C 1", "2" = "C 2", "3" = "C 7", "4" = "C 4", "5" = "C 3", "6" = "C 6", "7" = "C 5", "8" = "C 8")
 
-high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot <- ggplot(data = cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs, aes(x = Cluster, y = rel.freq, fill = annot.type)) +
+basic.annotation.type.freqs$Cluster_Label <- factor(x = basic.annotation.type.freqs$Cluster_Label,
+                                                    levels = paste("C", 1:8, sep = " "))
+knitr::kable(
+  basic.annotation.type.freqs %>% dplyr::select(Cluster_Label, annot.type, rel.freq) %>% arrange(Cluster_Label)
+  )
+
+```
+
+## Basic annotation plot.
+
+```{r basic_annotation_plot}
+
+ggplot(data = basic.annotation.type.freqs, aes(x = Cluster_Label, y = rel.freq, fill = annot.type)) +
   geom_bar(position = "stack", stat = "identity") +
-  coord_flip() + scale_x_discrete(limits = rev(levels(cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs$Cluster)),
-                                  labels = cl.s.exprSet.high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot.freqs.labels) +
+  coord_flip() +
+  scale_x_discrete(limits = rev(levels(
+  basic.annotation.type.freqs$Cluster_Label
+  ))) +
   scale_fill_brewer(palette = "Paired") +
   xlab("ATAC-seq clusters") +
   ylab("Proportion of Cluster specific ATAC-seq peaks class") +
   labs(fill = "Class") +
-  gplot.theme + theme(legend.position = "right", legend.title = element_text(size = 10), legend.text = element_text(size = 9), axis.title = element_text(size = 10), axis.text = element_text(size = 9))
-
-ggsave(
-  plot = high.cv.high.affinity.peaks.ann.granges.annotated.basic.plot,
-  file = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/Figure_PDFs/Figure_5E.pdf",
-  height = 8,
-  width = 12.5,
-  units = "cm",
-  dpi = 200,
-  scale = 1,
-  device = "pdf"
+  gplot.theme + theme(
+  legend.position = "right",
+  legend.title = element_text(size = 10),
+  legend.text = element_text(size = 9),
+  axis.title = element_text(size = 10),
+  axis.text = element_text(size = 9)
   )
-
-
 ```
 
 
-## Chromatin accessibility of candidates
-Based on fully annotated clusters (Homer, see methods), peaks closest to genes TSSs were filtered and selected candidates plot.
-Gene expression based on bulk RNA-seq grouped by stage and media were also plot alongside. 
+# Integration of chromatin accessibility and expression profiles.
+
+Profile of genes associated with primed and naive reprogramming and somatic regulatory elements. 
+We also show the global gene expression profiles of genes associated with peaks in the clusters identified above.
+
+Based on comprehensively annotated clusters (annotation with Homer, see methods) and peaks asociated with gene TSSs (see methods).
 
 For simplicity, objects with the annotated clusters and z-scores of expressed genes are loaded `data/bkATAC_annotated_clusters.Rdata` and `data/bkATAC_gene_expression_bulk_RNA_seq.Rdata`)
+
+```{r annotated_clusters}
+
+base::load(file = "")
+
+```
 
 # Motif enrichment.
 Top 25 most enriched motifs (based on p-value) used (`data/bkATAC_motif_enrichment.Rdata`)
