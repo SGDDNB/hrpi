@@ -35,6 +35,7 @@ library(ggplot2)
 library(ggrepel)
 library(knitr)
 library(annotatr)
+library(plyr)
 # library(GenomicRanges)
 # library(GenomicFeatures)
 # rm(list=ls())
@@ -300,9 +301,10 @@ high.affinity.peaks.annotated <-
   
 ```
 
-## Cluster dynamics (mean +/- SD).
+## Cluster dynamics.
 
 ### High affinity cluster membership counts table.
+
 ```{r membership_counts}
 
 core.exprSet.cluster.counts <- lapply(core.exprSet, nrow) %>%
@@ -327,12 +329,10 @@ core.exprSet.cluster.counts <-
   
 core.exprSet.cluster.counts$Cluster_Label <- factor(x = core.exprSet.cluster.counts$Cluster_Label,
                                                     levels = paste("C", 1:8, sep = " "))
-knitr::kable(core.exprSet.cluster.counts %>% select(Cluster_Label, members) %>% arrange(Cluster_Label))
+knitr::kable(core.exprSet.cluster.counts %>% dplyr::select(Cluster_Label, members) %>% arrange(Cluster_Label))
 ```
 
-## Cluster dynamics plots.
-
-### Table.
+### Cluster dynamics plots.
 
 ```{r  cluster_dynamics_table}
 high.affinity.peaks.melt <-
@@ -402,6 +402,24 @@ cluster.dynamics.plot.values$Cluster_Label  <-
 ### Cluster dynamics plot.
 Ribbon equals mean +/- SD.
 ```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5}
+
+# Write facet labels as described 
+# here:https://stackoverflow.com/questions/3472980/how-to-change-facet-labels
+
+cluster.labels.atac.seq <- list(
+  "C 1" = "C 1 (n = 12024)",
+  "C 2" = "C 2 (n = 7779)",
+  "C 3" = "C 3 (n = 5077)",
+  "C 4" = "C 4 (n = 3334)",
+  "C 5" = "C 5 (n = 9117)",
+  "C 6" = "C 6 (n = 10129)",
+  "C 7" = "C 7 (n = 4885)",
+  "C 8" = "C 8 (n = 7739)"
+  )
+  
+cluster_labeller_atac <- function(variable,value){
+  return(cluster.labels.atac.seq[value])
+}
 
 ggplot(data = NULL, aes(stage, mean, group = 1)) +
   geom_line(
@@ -497,8 +515,10 @@ ggplot(data = NULL, aes(stage, mean, group = 1)) +
   fill = "#2302FE",
   alpha = 0.5
   ) +
-  facet_wrap( ~ Cluster_Label, nrow = 4, ncol = 2) +
-  gplot.theme + theme(legend.position = "none", axis.title = element_blank())
+  ylab("Chromatin accessibiliyt (Z-scaling)") +
+  xlab("Reprogramming stages") +
+  facet_wrap( ~ Cluster_Label, nrow = 4, ncol = 2, labeller = cluster_labeller_atac) +
+  gplot.theme + theme(legend.position = "none")
 
 ```
 
@@ -586,12 +606,11 @@ For simplicity, objects with the annotated clusters and z-scores of expressed ge
 
 ## Load annotated clusters and process.
 ```{r annotated_clusters}
-# Load annotated cluster and prepare peaks closest to TSSs
-
+# Load annotated cluster and subset peaks closest to TSSs
 
 load(file = "../data/bkATAC_annotated_clusters.Rdata") # Creates `annotated.clusters` object.
 
-# Filter peaks with no Ensembl ID associated.
+# Filter out peaks with no Ensembl ID associated.
 
 annotated.clusters.table <- ldply(annotated.clusters, rbind) %>% filter(!Nearest.Ensembl == "" ) %>% .[, -1] %>% dplyr::select(-c("Peak.Score", "Focus.Ratio.Region.Size"))
 
@@ -600,6 +619,9 @@ annotated.clusters.table.nearest.TSS <-
   as.data.frame(annotated.clusters.table) %>%
   dplyr::group_by(Nearest.Ensembl) %>%
   dplyr::slice(which.min(abs(Distance.to.TSS)))
+
+dplyr::filter(annotated.clusters.table, Nearest.Ensembl == "ENSG00000104213")
+dplyr::filter(annotated.clusters.table.nearest.TSS, Nearest.Ensembl == "ENSG00000104213")
 
 # Add cluster information and chromatin accessiblity z-scores.  
 annotated.clusters.table.nearest.TSS <-
@@ -614,85 +636,89 @@ annotated.clusters.table.nearest.TSS <-
 
 ```
 
-## Peak associated genes.
+## Peak-associated genes.
 
-### Expression table.
+## Expression table.
+
 ```{r z_scores_rna_seq}
-base::load(file = "../data/bkATAC_gene_z_scores_bkRNA_seq.Rdata") # Load RNA-seq gene z-scores.
+base::load(file = "../data/bkATAC_gene_z_scores_bkRNA_seq.Rdata") # Load RNA-seq gene z-scores object name :`bkRNA.seq.z.scores`
 
-# Filter out genes with no associated cluster and add cluster information
+# Simplify TSS table to include cluster information and gene ENSEMBL ids.
 
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss <-  dplyr::inner_join(s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes,
-                  homer.annotated.changing.clusters.details.table.nearest.TSS.cluster.ids, by = "Ensembl_id")
+table.nearest.TSS.cluster <- dplyr::select(annotated.clusters.table.nearest.TSS, c("Nearest.Ensembl", "Cluster", "Cluster_Label"))
 
+colnames(table.nearest.TSS.cluster)[1] <- "Ensembl_id"
+
+# Add cluster information to expressed genes. Please note that not all expressed genes have a cluster associated to.
+
+bkRNA.seq.z.scores.annotated <-
+  dplyr::inner_join(bkRNA.seq.z.scores,
+  table.nearest.TSS.cluster,
+  by = "Ensembl_id")
+  
 ```
 
-## Plots
-```{r}
-##### Peaks closest to TSS - All detected genes. 
+### Table of number of expressed genes associated to ATAC-seq peak clusters.
 
+```{r table_peak-associated_genes}
 
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss
+bkRNA.seq.z.scores.cluster.counts <-
+  bkRNA.seq.z.scores.annotated %>%
+  group_by(Cluster_Label) %>%
+  dplyr::count()
 
-gene.ids <- bulk.RNA.seq.raw.counts[, 1:2]
-colnames(gene.ids)[1] <- "Ensembl_id"
+knitr::kable(bkRNA.seq.z.scores.cluster.counts)
+```
 
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.annotated <-
-  dplyr::inner_join(
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss,
-  gene.ids,
-  by = "Ensembl_id"
-  )
-for (i in c(1:8)){
-  write.table(s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.annotated %>% dplyr::filter(Cluster == i) %>% dplyr::select(c("Ensembl_id", "Cluster", "geneName")),
-  file = paste("~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/fuzzy_clustering/combined_sets/cluster_analysis/bulk_RNA-seq_genes_over_ATAC-seq_changing_clusters_peaks_TSS/",
-  "cluster_",
-  i,
-  "_gene_ids.csv",sep = ""),
-  row.names = F,
-  sep = "\t",
-  quote = F)
-}
+### Expression plots of genes associated to ATAC-seq peak clusters.
+```{r expression_accessibilty_plots}
 
-
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt <-
+bkRNA.seq.z.scores.annotated.melt <-
   melt(
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss,
-  id = c("Ensembl_id", "Cluster")
+  bkRNA.seq.z.scores.annotated %>% dplyr::select(-c("geneName", "Cluster")),
+  id = c("Ensembl_id", "Cluster_Label")
   )
   
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt <-
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt %>%
+bkRNA.seq.z.scores.annotated.melt <-
+  bkRNA.seq.z.scores.annotated.melt %>%
   mutate(media = ifelse(grepl("Fibroblast", variable), "FM",
-  ifelse(grepl("Primed", variable), "PM", "NM")))  %>%
+                        ifelse(grepl("Primed", variable), "PM", "NM")))  %>%
   mutate(stage = gsub(".*_", "", variable))
 
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt$stage <-
+bkRNA.seq.z.scores.annotated.melt$stage <-
   factor(
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt$stage,
+  bkRNA.seq.z.scores.annotated.melt$stage,
   levels = c("D00", "D03", "D07", "D13", "D21", "P03", "P10"),
   labels = c("D0", "D3", "D7", "D13", "D21", "P3", "P10")
   )
-  
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.counts <-
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss %>%
-  group_by(Cluster) %>%
-  dplyr::count()
+
+# Labeller as above.  
+cluster.labels.rna.seq <- list("C 1" = "C 1 (n = 1823)", 
+                                 "C 2" = "C 2 (n = 1347)",
+                                 "C 3" = "C 3 (n = 892)",
+                                 "C 4" = "C 4 (n = 339)",
+                                 "C 5" = "C 5 (n = 1239)",
+                                 "C 6" = "C 6 (n = 1027)", 
+                                 "C 7" = "C 7 (n = 790)",
+                                 "C 8" = "C 8 (n = 1547)")
+
+cluster_labeller_rna <- function(variable,value){
+  return(cluster.labels.rna.seq[value])
+}
 
 
 
-s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt$Cluster <- factor(s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt$Cluster, levels = c(1, 2, 5, 4, 7, 6, 3, 8))
-cluster.labels.rna.seq <- c("1" = "C 1 (n = 1823)", "2" = "C 2 (n = 1347)", "3" = "C 7 (n = 790)", "4" = "C 4 (n = 339)", "5" = "C 3 (n = 892)", "6" = "C 6 (n = 1027)", "7" = "C 5 (n = 1239)", "8" = "C 8 (n = 1547)")
-atac.seq.clustes.tss.peaks.bulk.RNA.seq.all.genes.ggplot <-
-  ggplot(data = s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt %>%
+ggplot(
+  data = bkRNA.seq.z.scores.annotated.melt %>%
   dplyr::filter(media %in% c("FM", "PM")),
-  aes(stage, value, group = Ensembl_id, colour = media)) +
+  aes(stage, value, group = Ensembl_id, colour = media)
+  ) +
   stat_summary(aes(group = 1),
   fun.y = mean,
   geom = "line",
   size = 1) +
   stat_summary(
-  data = s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt %>%
+  data = bkRNA.seq.z.scores.annotated.melt %>%
   dplyr::filter(media %in% c("FM", "NM")),
   aes(group = 1),
   fun.y = mean,
@@ -701,84 +727,14 @@ atac.seq.clustes.tss.peaks.bulk.RNA.seq.all.genes.ggplot <-
   ) +
   scale_color_manual(values = c("FM" = "black", "NM" = "#0000FF", "PM" = "#FF8C00"),
   name = "Culture Media") +
-  facet_wrap(~ Cluster, nrow = 1, ncol = 8) +
-  # facet_wrap(~ Cluster, nrow = 1, ncol = 8, labeller = labeller(Cluster = cluster.labels.rna.seq)) +
-  ylab("Gene expression (z-score)") +
-  xlab("Reprogramming stages") +
-  # ggtitle("Fuzzy clustering")  +
-  # geom_text(
-  # data = s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.counts,
-  # aes(
-  # x = 2,
-  # y = -0.4,
-  # label = paste("n = ", n)
-  # ),
-  # colour = "black",
-  # inherit.aes = FALSE,
-  # parse = FALSE,
-  # size = 2.5,
-  # fontface = "bold"
-  # ) +
-  gplot.theme
-print(atac.seq.clustes.tss.peaks.bulk.RNA.seq.all.genes.ggplot)
-ggsave(
-  plot = atac.seq.clustes.tss.peaks.bulk.RNA.seq.all.genes.ggplot,
-  filename = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/Figure_PDFs/Figure_4_bulk_RNA-seq_over_ATAC-seq_changing_clusters_peaks_tss_resized_reordered_horizontal_no_labels.pdf",
-  height = 5,
-  width = 28,
-  units = "cm",
-  dpi = 200,
-  scale = 1,
-  device = "pdf"
-  )
-
-extended.figure.6.c.source.data <- select(
-  s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt,
-  -variable
-  )
-
-extended.figure.6.c.source.data <- extended.figure.6.c.source.data %>% mutate(
-  Cluster_Label = case_when(
-  Cluster == "1" ~ "C 1",
-  Cluster == "2" ~ "C 2",
-  Cluster == "3" ~ "C 7",
-  Cluster == "4" ~ "C 4",
-  Cluster == "5" ~ "C 3",
-  Cluster == "6" ~ "C 6",
-  Cluster == "7" ~ "C 5",
-  TRUE ~ "C 8"
-  )
-  )
-extended.figure.6.c.source.data$Cluster_Label  <-
-  factor(x = extended.figure.6.c.source.data$Cluster_Label,
-  levels = c("C 1", "C 2", "C 3", "C 4", "C 5", "C 6", "C 7", "C 8"))
-
-# Plot test
-
-ggplot(data = extended.figure.6.c.source.data %>%
-  dplyr::filter(media %in% c("FM", "PM")),
-  aes(stage, value, group = Ensembl_id, colour = media)) +
-  stat_summary(aes(group = 1),
-  fun.y = mean,
-  geom = "line",
-  size = 1) +
-  stat_summary(
-  data = extended.figure.6.c.source.data %>%
-  dplyr::filter(media %in% c("FM", "NM")),
-  aes(group = 1),
-  fun.y = mean,
-  geom = "line",
-  size = 1
-  ) +
-  scale_color_manual(values = c("FM" = "black", "NM" = "#0000FF", "PM" = "#FF8C00"),
-  name = "Culture Media") +
-  facet_wrap(~ Cluster_Label, nrow = 1, ncol = 8) +
+  facet_wrap( ~ Cluster_Label,
+  nrow = 4,
+  ncol = 2,
+  labeller = cluster_labeller_rna) +
   ylab("Gene expression (z-score)") +
   xlab("Reprogramming stages") +
   gplot.theme
 
-write_excel_csv(x = select(extended.figure.6.c.source.data,-Cluster),
-                path = "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/data/Source_Data/extended.figure.6.c.source.data.csv")
 ```
 
 ##### ATAC-seq peaks dynamics closest to TSS selected genes
