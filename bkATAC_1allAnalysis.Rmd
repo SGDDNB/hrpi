@@ -327,16 +327,22 @@ core.exprSet.cluster.counts <-
   )
   )
   
-core.exprSet.cluster.counts$Cluster_Label <- factor(x = core.exprSet.cluster.counts$Cluster_Label,
-                                                    levels = paste("C", 1:8, sep = " "))
-knitr::kable(core.exprSet.cluster.counts %>% dplyr::select(Cluster_Label, members) %>% arrange(Cluster_Label))
+core.exprSet.cluster.counts$Cluster_Label <-
+  factor(x = core.exprSet.cluster.counts$Cluster_Label,
+  levels = paste("C", 1:8, sep = " "))
+
+knitr::kable(
+  core.exprSet.cluster.counts %>% dplyr::select(Cluster_Label, members) %>% arrange(Cluster_Label)
+  )
+  
 ```
 
-### Cluster dynamics plots.
+### Cluster dynamics plot.
 
 ```{r  cluster_dynamics_table}
+
 high.affinity.peaks.melt <-
-  melt(select(
+  melt(dplyr::select(
   high.affinity.peaks.annotated,
   -c("Chr", "Start", "End", "Strand", "Length", "Cluster_Label")
   ),
@@ -370,7 +376,7 @@ high.affinity.peaks.melt$Cluster <-
 
 
 cluster.dynamics.plot.values <-
-  high.affinity.peaks.melt %>% group_by(media, stage, Cluster) %>% summarise(
+  high.affinity.peaks.melt %>% group_by(media, stage, Cluster) %>% dplyr::summarise(
   mean = mean(value),
   sd = sd(value)
   )
@@ -399,9 +405,10 @@ cluster.dynamics.plot.values$Cluster_Label  <-
 
 
 ```
-### Cluster dynamics plot.
-Ribbon equals mean +/- SD.
-```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5}
+
+Ribbon equals mean +/- SD (ggplot code hidden, see Rmd for details).
+
+```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5, warning=FALSE, echo=FALSE}
 
 # Write facet labels as described 
 # here:https://stackoverflow.com/questions/3472980/how-to-change-facet-labels
@@ -546,7 +553,7 @@ high.affinity.peaks.annotated.granges <-
 
 ## Basic annotation table.
 
-```{r}
+```{r basic_annotation_table}
 
 # Annotation type data frame
 
@@ -558,9 +565,9 @@ high.affinity.peaks.annotated.granges.df <-
 
 basic.annotation.type.freqs <-
   high.affinity.peaks.annotated.granges.df %>%
-  group_by(Cluster_Label, annot.type) %>%
-  summarise(n = n()) %>%
-  mutate(total = sum(n), rel.freq = n / total)
+  dplyr::group_by(Cluster_Label, annot.type) %>%
+  dplyr::summarise(n = n()) %>% 
+  dplyr::mutate(total = sum(n), rel.freq = n / total)
 
 
 basic.annotation.type.freqs$Cluster_Label <- factor(x = basic.annotation.type.freqs$Cluster_Label,
@@ -620,8 +627,8 @@ annotated.clusters.table.nearest.TSS <-
   dplyr::group_by(Nearest.Ensembl) %>%
   dplyr::slice(which.min(abs(Distance.to.TSS)))
 
-dplyr::filter(annotated.clusters.table, Nearest.Ensembl == "ENSG00000104213")
-dplyr::filter(annotated.clusters.table.nearest.TSS, Nearest.Ensembl == "ENSG00000104213")
+# dplyr::filter(annotated.clusters.table, Nearest.Ensembl == "ENSG00000104213")
+# dplyr::filter(annotated.clusters.table.nearest.TSS, Nearest.Ensembl == "ENSG00000104213")
 
 # Add cluster information and chromatin accessiblity z-scores.  
 annotated.clusters.table.nearest.TSS <-
@@ -636,9 +643,9 @@ annotated.clusters.table.nearest.TSS <-
 
 ```
 
-## Peak-associated genes.
+## Genes associated to ATAC-seq peak clusters.
 
-## Expression table.
+### Expression table.
 
 ```{r z_scores_rna_seq}
 base::load(file = "../data/bkATAC_gene_z_scores_bkRNA_seq.Rdata") # Load RNA-seq gene z-scores object name :`bkRNA.seq.z.scores`
@@ -658,7 +665,7 @@ bkRNA.seq.z.scores.annotated <-
   
 ```
 
-### Table of number of expressed genes associated to ATAC-seq peak clusters.
+## Table of number of expressed genes associated to ATAC-seq peak clusters.
 
 ```{r table_peak-associated_genes}
 
@@ -670,8 +677,9 @@ bkRNA.seq.z.scores.cluster.counts <-
 knitr::kable(bkRNA.seq.z.scores.cluster.counts)
 ```
 
-### Expression plots of genes associated to ATAC-seq peak clusters.
-```{r expression_accessibilty_plots}
+## Expression profile of genes associated to ATAC-seq peak clusters.
+
+```{r expression_genes_cluster, warning=FALSE, fig.align="center", fig.height=9, fig.width=4.5}
 
 bkRNA.seq.z.scores.annotated.melt <-
   melt(
@@ -706,8 +714,6 @@ cluster_labeller_rna <- function(variable,value){
   return(cluster.labels.rna.seq[value])
 }
 
-
-
 ggplot(
   data = bkRNA.seq.z.scores.annotated.melt %>%
   dplyr::filter(media %in% c("FM", "PM")),
@@ -737,45 +743,88 @@ ggplot(
 
 ```
 
-##### ATAC-seq peaks dynamics closest to TSS selected genes
-```{r atac-seq peaks dynamics closest to tss seleceted genes}
+## Selected Genes chromatin accessibility and expression profiles.
+The following genes were selected: SNAI1, TWIST2, ZEB2 ,BHLHE40, F11R, ZIC5, OCLN, NLRP7.
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene <- homer.annotated.changing.clusters.details.table.nearest.TSS %>% ungroup %>% dplyr::select("Gene.Name", "D0", "D3", "D7", "D13_Primed", "D21_Primed", "P3_Primed", "P10_Primed", "D13_Smith", "D21_Smith", "P3_Smith", "P10_Smith")
+### Chromatin accessiblity profile of selected genes.
+```{r chromatin_accessibility_selected_genes}
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt <- melt(homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene, id = c("Gene.Name"))
-### ADD MUTATE IFELSE FOR MEDIA AND STAGE POST MELT
+selected.genes <- data.frame(geneName = c("SNAI1", "TWIST2", "ZEB2", "BHLHE40", "F11R", "ZIC5", "OCLN", "NLRP7"))
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt <- homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt %>% mutate(stage = ifelse(variable == "D0", "D0",ifelse(variable == "D3", "D3", ifelse(variable == "D7", "D7", ifelse(variable == "D13_Primed" | variable == "D13_Smith", "D13", ifelse(variable == "D21_Primed" | variable == "D21_Smith", "D21", ifelse(variable == "P3_Primed" | variable == "P3_Smith", "P3", "P10")))))))
+selected.genes <- dplyr::inner_join(selected.genes,
+dplyr::select(bkRNA.seq.z.scores.annotated,
+c("Ensembl_id", "geneName")),
+by = "geneName")
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt <- homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt %>% 
-  mutate(media = case_when(grepl("D0|D3|D7", variable) ~ "FM",
-                           grepl("Smith", variable) ~ "NM",
-                           grepl("Primed", variable) ~ "PM"))
-                                                             
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt$stage <-
+# Chromatin accessibility
+
+chromatin.accessibiliy.selected.genes <-
+  annotated.clusters.table.nearest.TSS %>% ungroup() %>% dplyr::select(
+  "Gene.Name",
+  "D0",
+  "D3",
+  "D7",
+  "D13_Primed",
+  "D21_Primed",
+  "P3_Primed",
+  "P10_Primed",
+  "D13_Smith",
+  "D21_Smith",
+  "P3_Smith",
+  "P10_Smith"
+  ) %>% filter(Gene.Name %in% selected.genes$geneName)
+  
+chromatin.accessibiliy.selected.genes.melt <-
+  melt(chromatin.accessibiliy.selected.genes, id = c("Gene.Name"))
+
+chromatin.accessibiliy.selected.genes.melt <-
+  chromatin.accessibiliy.selected.genes.melt %>%
+  mutate(stage = case_when(
+  grepl("D13", variable) ~ "D13",
+  grepl("D21", variable) ~ "D21",
+  grepl("P3", variable) ~ "P3",
+  grepl("P10", variable) ~ "P10",
+  TRUE ~ as.character(variable)
+  )) %>%
+  mutate(media = case_when(
+  grepl("D0|D3|D7", variable) ~ "FM",
+  grepl("Smith", variable) ~ "NM",
+  grepl("Primed", variable) ~ "PM"
+  ))
+  
+
+chromatin.accessibiliy.selected.genes.melt$stage <-
   factor(
-  homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt$stage,
+  chromatin.accessibiliy.selected.genes.melt$stage,
   levels = c("D0", "D3", "D7", "D13", "D21", "P3", "P10")
   )
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates <- dplyr::filter(homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt, Gene.Name %in% levels(
-  z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$geneName))
 
-# homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates$Gene.Name <- factor(homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates$Gene.Name, levels = levels(
-#   z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$geneName))
+chromatin.accessibiliy.selected.genes.melt$Gene.Name <-
+  factor(
+  chromatin.accessibiliy.selected.genes.melt$Gene.Name,
+  levels = c(
+  "SNAI1",
+  "TWIST2",
+  "ZEB2",
+  "BHLHE40",
+  "F11R",
+  "ZIC5",
+  "OCLN",
+  "NLRP7"
+  )
+  )
+  
 
-homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates$Gene.Name <- factor(homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates$Gene.Name, levels = c("SNAI1", "TWIST2", "ZEB2", "BHLHE40", "F11R", "ZIC5", "OCLN", "NLRP7"))
-
-
-rna.seq.over.atac.seq.dynamics <- ggplot(
-  data = homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates %>%
+plot.chromatin.accessibiliy.selected.genes <- ggplot(
+  data = chromatin.accessibiliy.selected.genes.melt %>%
   filter(
   media %in% c("FM", "PM")),
   aes(stage, value, group = Gene.Name, colour = media)
   ) +
   geom_line(size = 1.5) +
   geom_line(
-  data = homer.annotated.changing.clusters.details.table.nearest.TSS.by.gene.melt.candidates %>%
+  data = chromatin.accessibiliy.selected.genes.melt %>%
   filter(
   media %in% c("FM", "NM")
   ),
@@ -784,55 +833,136 @@ rna.seq.over.atac.seq.dynamics <- ggplot(
   scale_color_manual(values = c("FM" = "black", "NM" = "#0000FF", "PM" = "#FF8C00"),
   name = "Culture Media") +
   facet_wrap( ~ Gene.Name, nrow = 8, ncol = 1) +
-  ylab("Chromatin Accessiblity (z-score)") +
+  ylab("Chromatin Accessiblity (Z-score)") +
   xlab("Reprogramming stages") +
   gplot.theme
-  ggsave(plot = rna.seq.over.atac.seq.dynamics,
-  "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/Figure_PDFs/Figure_4_bulk_RNA-seq_over_ATAC-seq_changing_clusters_line_plots_closest_to_tss_dynamics_reordered.pdf",
-  height = 15,
-  width = 4.5,
-  units = "cm",
-  dpi = 300,
-  scale = 1
-  )
+
 ```
-##### Selected gene expression plots - Cluster basd
-```{r}
-figure.4.bulk.RNA.seq.candidates.canonical.ensembl <- queryMany(figure.4.bulk.RNA.seq.candidates.canonical$hg19.kgXref.geneSymbol, fields = "ensembl.gene", scope = "symbol", species = "human")
 
-z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl <-
-  filter(
-    s.exprSet.mean.log2.rpkm.bulk.RNA.seq.filtered.low.count.genes.atac.seq.changing.cluster.tss.melt,
-    Ensembl_id %in% c(
-      figure.4.bulk.RNA.seq.candidates.canonical.ensembl$ensembl %>% unlist()
-    )
+### Gene expression profile of selected genes.
+
+```{r gene_expression_profile, warning=FALSE}
+
+gene.expression.selected.genes.melt <-
+  dplyr::inner_join(selected.genes,
+    bkRNA.seq.z.scores.annotated.melt,
+    by = "Ensembl_id")
+
+gene.expression.selected.genes.melt$geneName <-
+  factor(
+  gene.expression.selected.genes.melt$geneName,
+  levels = c(
+  "SNAI1",
+  "TWIST2",
+  "ZEB2",
+  "BHLHE40",
+  "F11R",
+  "ZIC5",
+  "OCLN",
+  "NLRP7"
   )
-z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl <- inner_join(z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl, gene.ids, by = "Ensembl_id")
-z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$Cluster <- factor(z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$Cluster, levels = c(1:8))
+  )
 
-z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$geneName <- factor(z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl$geneName,
-                                                                              levels = c("SNAI1", "TWIST2", "ZEB2", "BHLHE40", "F11R", "ZIC5", "OCLN", "NLRP7"))
-selected.genes.line.plots <- ggplot(data = z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl %>% 
-         filter(media %in% c("FM", "PM")), 
-       aes(stage, value, group = geneName, colour = media)) +
+gene.expression.selected.genes.plots <-
+  ggplot(data = gene.expression.selected.genes.melt %>%
+  filter(media %in% c("FM", "PM")),
+  aes(stage, value, group = geneName, colour = media)) +
   geom_line(size = 1.5) +
-  geom_line(data = z.score.figure.4.bulk.RNA.seq.candidates.canonical.ensembl %>% 
-              filter(media %in% c("FM", "NM")), aes(stage, value, group = geneName, colour = media), size = 1.5) +
-  scale_color_manual(values = c("FM" = "black", "NM" = "#0000FF", "PM" = "#FF8C00"), name = "Culture Media") +
-  facet_wrap(~geneName, nrow = 8, ncol = 1) +
-  ylab("Gene expression (z-score)") +
+  geom_line(
+  data = gene.expression.selected.genes.melt %>%
+  filter(media %in% c("FM", "NM")),
+  aes(stage, value, group = geneName, colour = media),
+  size = 1.5
+  ) +
+  scale_color_manual(values = c("FM" = "black", "NM" = "#0000FF", "PM" = "#FF8C00"),
+  name = "Culture Media") +
+  facet_wrap( ~ geneName, nrow = 8, ncol = 1) +
+  ylab("Gene expression (Z-score)") +
   xlab("Reprogramming stages") +
   gplot.theme
-ggsave(plot = selected.genes.line.plots,
-  "~/projects/Polo_Group/Ethan_Liu/Ethan_Liu_ATAC-seq_Human_Reprogramming_human_samples/analysis/R/plots/Figure_PDFs/Figure_4_bulk_RNA-seq_over_ATAC-seq_changing_clusters_line_plots_reordered.pdf",
-  height = 15,
-  width = 4.5,
-  units = "cm",
-  dpi = 300,
-  scale = 1
-)
+
 ```
 
+```{r accessibliyt_expression_profiles_selected_genes, fig.height=12.5, fig.width=7.5, echo = FALSE, warning=FALSE}
+
+plot.chromatin.accessibiliy.selected.genes | gene.expression.selected.genes.plots
+
+```
 
 # Motif enrichment.
-Top 25 most enriched motifs (based on p-value) used (`data/bkATAC_motif_enrichment.Rdata`)
+Top 25 most enriched motifs (based on p-value).
+
+```{r motif_enrichment}
+
+ # Load bkATAC_motif_enrichment object
+base::load("../data/bkATAC_motif_enrichment.Rdata")
+bkATAC_motif_enrichment %>% head()
+
+# Add cluster labels as above
+
+bkATAC_motif_enrichment <- bkATAC_motif_enrichment %>% mutate(
+  Cluster_Label = case_when(
+  cluster == "Cluster 1" ~ "C 1",
+  cluster == "Cluster 2" ~ "C 2",
+  cluster == "Cluster 3" ~ "C 7",
+  cluster == "Cluster 4" ~ "C 4",
+  cluster == "Cluster 5" ~ "C 3",
+  cluster == "Cluster 6" ~ "C 6",
+  cluster == "Cluster 7" ~ "C 5",
+  TRUE ~ "C 8"
+  )
+  )
+
+bkATAC_motif_enrichment  <-  data.table(bkATAC_motif_enrichment)
+bkATAC_motif_enrichment$motifHS  <- bkATAC_motif_enrichment$human_symbol
+# Remove duplicated TFs names
+dup.TF <-  unique(bkATAC_motif_enrichment[, c("motif.hs", "motifHS")])
+dup.TF <-  dup.TF$motifHS[duplicated(dup.TF$motifHS)]
+oup.Motif = bkATAC_motif_enrichment[!(motifHS %in% dup.TF)]
+
+for(i in dup.TF){
+  tmp = bkATAC_motif_enrichment[motifHS == i]
+  tmp = tmp[tmp[, .I[which.max(m.Log.P.Value)], by = c("cluster", "motifHS")]$V1]
+  oup.Motif = rbindlist(list(oup.Motif, tmp))
+}
+
+oup.Motif$mLogP = oup.Motif$m.Log.P.Value
+oup.Motif$target = oup.Motif$target_sequence_percentage * 100
+
+oup.Motif$clustPlot = factor(oup.Motif$Cluster_Label, levels = rev(paste("C", 1:8, sep = " ")))
+
+oup.Motif$motifHS = factor(oup.Motif$motifHS,
+                           levels = unique(oup.Motif[order(-clustPlot,-mLogP)]$motifHS))
+
+gg.Data = oup.Motif
+
+gg.Data[target > 50]$target = 50
+
+ggplot(gg.Data, aes(motifHS, clustPlot, color = mLogP, size = target)) +
+  geom_point() +
+  xlab("Transcription Factor") + ylab("ATAC Cluster") +
+  scale_size_continuous(
+  "Target sequence with motif (%)",
+  range = c(0, 5.5),
+  limits = c(0, 50),
+  breaks = c(0, 25, 50),
+  labels = c("0", "25", ">50")
+  ) +
+  scale_color_gradientn("-log (Enrichment P-value)",
+  limits = c(50, 6000),
+  breaks = c(0, 2000, 4000, 6000),
+  colours = c("darkblue", "darkred")
+  ) +
+  guides(color = guide_colorbar(barwidth = 15, barheight = 1)) +
+  # jtheme(
+  # Xang = 45,
+  # XjusH = 1,
+  # XjusV = 1,
+  # YjusH = 1,
+  # Xsiz = 11,
+  # Lpos = "bottom",
+  # theme = "grid"
+  # ) +
+  theme(axis.text.x = element_text(size = 11, face = "bold"))
+```
+
