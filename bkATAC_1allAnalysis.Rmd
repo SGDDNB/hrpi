@@ -36,8 +36,6 @@ library(ggrepel)
 library(knitr)
 library(annotatr)
 library(plyr)
-# library(GenomicRanges)
-# library(GenomicFeatures)
 # rm(list=ls())
 ```
 ## Define colour palettes.
@@ -100,7 +98,7 @@ rownames(peak.counts) <- peak.counts$PeakID
 
 ## Within and between library normalization.
 
-### Quantile normalise log2(RPKM + 1)
+### Quantile-normalise log2(RPKM + 1)
 
 ```{r quantile_log2}
 
@@ -164,7 +162,7 @@ ggplot(pca.plot.annotation, aes(PC1, PC3, color = media, label = timept)) +
 
 # Fuzzy clustering.
 
-## Aggregate sample counts means and calculate RPKM.
+## Aggregate sample counts and calculate RPKM.
 
 ```{r aggregate_sample_counts_rpkm}
 # Prepare conditions labels.
@@ -195,7 +193,7 @@ colnames(aggregated.peak.counts) <-
   colnames(aggregated.peak.counts) %>% gsub("\\.\\*", "_", .)
 
 ```
-## Quantile normalise log2(RPKM + 1)
+## Quantile-normalise log2(RPKM + 1)
 
 ```{r aggregated_counts_fpkm_log2}
 
@@ -890,17 +888,18 @@ plot.chromatin.accessibiliy.selected.genes | gene.expression.selected.genes.plot
 ```
 
 # Motif enrichment.
-Top 25 most enriched motifs (based on p-value).
+## Top 25 most enriched motifs (based on p-value).
+For simplicity, in circumstances where motifs have identical symbols, the motif with the highest -(log10(p-value)) was kept; e.g, cases such as EWS:ERG-Fusion and ERG. 
 
-```{r motif_enrichment}
+```{r motif_enrichment, fig.height=5, fig.width=12.5}
 
- # Load bkATAC_motif_enrichment object
+ # Load `bkATAC_motif_enrichment` object containing information of top 25 most enriched motifs accross clusters.
 base::load("../data/bkATAC_motif_enrichment.Rdata")
 bkATAC_motif_enrichment %>% head()
 
 # Add cluster labels as above
 
-bkATAC_motif_enrichment <- bkATAC_motif_enrichment %>% mutate(
+bkATAC_motif_enrichment <- bkATAC_motif_enrichment %>% dplyr::mutate(
   Cluster_Label = case_when(
   cluster == "Cluster 1" ~ "C 1",
   cluster == "Cluster 2" ~ "C 2",
@@ -915,7 +914,7 @@ bkATAC_motif_enrichment <- bkATAC_motif_enrichment %>% mutate(
 
 bkATAC_motif_enrichment  <-  data.table(bkATAC_motif_enrichment)
 bkATAC_motif_enrichment$motifHS  <- bkATAC_motif_enrichment$human_symbol
-# Remove duplicated TFs names
+
 dup.TF <-  unique(bkATAC_motif_enrichment[, c("motif.hs", "motifHS")])
 dup.TF <-  dup.TF$motifHS[duplicated(dup.TF$motifHS)]
 oup.Motif = bkATAC_motif_enrichment[!(motifHS %in% dup.TF)]
@@ -953,16 +952,43 @@ ggplot(gg.Data, aes(motifHS, clustPlot, color = mLogP, size = target)) +
   breaks = c(0, 2000, 4000, 6000),
   colours = c("darkblue", "darkred")
   ) +
-  guides(color = guide_colorbar(barwidth = 15, barheight = 1)) +
-  # jtheme(
-  # Xang = 45,
-  # XjusH = 1,
-  # XjusV = 1,
-  # YjusH = 1,
-  # Xsiz = 11,
-  # Lpos = "bottom",
-  # theme = "grid"
-  # ) +
-  theme(axis.text.x = element_text(size = 11, face = "bold"))
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text = element_text(size = 8), 
+        legend.position = "bottom", legend.spacing.y = unit(0, "cm"),
+        panel.grid.minor = element_blank())
+
+```
+
+## TFAP2C and GATA2 motif enrichment.
+
+```{r tfap2c_motif_enrichment}
+# Load object with motif enrichment data of GATA2 and TFAP2C (AP2-gamma).
+
+base::load("../data/gata2.ap2.gamma.motif.enrichment.Rdata")
+
+tfap2c.motif.enrichment.plot <-
+  ggplot(data = gata2.ap2.gamma.motif.enrichment %>% dplyr::filter(motif.hs == "TFAP2C"),
+  aes(x = Cluster_Label,
+  y = -log_P_value)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  xlab("ATAC-seq clusters") +
+  ylab("-Log(Enrichment p-value)") +
+  ggtitle("TFAP2C motif enrichment") +
+  theme_classic()
+  
+gata2.motif.enrichment.plot <-
+  ggplot(data = gata2.ap2.gamma.motif.enrichment %>% dplyr::filter(motif.hs == "GATA2"),
+  aes(x = Cluster_Label,
+  y = -log_P_value)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  xlab("ATAC-seq clusters") +
+  ylab("-Log(Enrichment p-value)") +
+  ggtitle("GATA2 motif enrichment") +
+  theme_classic()
+
+tfap2c.motif.enrichment.plot | gata2.motif.enrichment.plot
 ```
 
