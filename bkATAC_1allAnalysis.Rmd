@@ -36,11 +36,10 @@ library(ggrepel)
 library(knitr)
 library(annotatr)
 library(plyr)
-# rm(list=ls())
 ```
-## Define colour palettes.
+## Define colour palettes and themes.
 
-```{r color_labels}
+```{r color_labels_themes}
 
 colorMedia = c("black","darkorange","blue","darkolivegreen2","red2","pink2")
 names(colorMedia) = c("D0, 3, 7","Primed","t2iLGoY","5iLAF","NHSM","RSeT")
@@ -70,7 +69,7 @@ gplot.theme <- theme(panel.border=element_blank(),
 ```{r import_read_counts}
 
 peak.counts <-
-  read.table(file = "../data/bkATAC_consensus_peak_set_counts.txt",
+  read.table(file = "data/bkATAC_consensus_peak_set_counts.txt",
              header = T,
              stringsAsFactors = F)
 ```
@@ -98,9 +97,9 @@ rownames(peak.counts) <- peak.counts$PeakID
 
 ## Within and between library normalization.
 
-### Quantile-normalise log2(RPKM + 1)
+### Quantile-normalise log2(FPKM + 1)
 
-```{r quantile_log2}
+```{r quantile_log2_fpkm}
 
 peaks.fpkm <-
   rpkm(peak.counts[, 7:ncol(peak.counts)],
@@ -139,7 +138,7 @@ pca.plot.annotation$timept = tstrsplit(pca.plot.annotation$sample_labels, "_")[[
 pca.plot.annotation$timept = factor(pca.plot.annotation$timept, 
                             levels = unique(pca.plot.annotation$timept))
 
-base::load("../data/seed.Rdata")
+base::load("data/seed.Rdata")
 .Random.seed <- seed
 pca <- prcomp_irlba(t(peaks.fpkm))
 
@@ -162,9 +161,9 @@ ggplot(pca.plot.annotation, aes(PC1, PC3, color = media, label = timept)) +
 
 # Fuzzy clustering.
 
-## Aggregate sample counts and calculate RPKM.
+## Aggregate sample counts and calculate FPKM.
 
-```{r aggregate_sample_counts_rpkm}
+```{r aggregate_sample_counts_fpkm}
 # Prepare conditions labels.
 
 conditions.labels <-
@@ -234,9 +233,9 @@ m <- mestimate(s.exprSet)
 # Create seed as save it as an object.
 # set.seed(1234)
 # seed <- .Random.seed
-# save(seed, file = "../data/seed.Rdata")
+# save(seed, file = "data/seed.Rdata")
 
-load("../data/seed.Rdata")
+load("data/seed.Rdata")
 .Random.seed <- seed
 
 cl.s.exprSet <- mfuzz(s.exprSet, c = 8, m = m)
@@ -249,7 +248,7 @@ peak.cluster.membership <- as.data.frame(cl.s.exprSet$cluster) %>%
 colnames(peak.cluster.membership)[1] <- "Cluster"
 
 ```
-### Filter high affinity peaks.
+### Identify and subset high affinity peaks.
 
 ```{r core_peaks}
 
@@ -264,14 +263,14 @@ core.exprSet.peaks.id <- as.character(unlist(core.exprSet.peaks.id))
 
 ```
 
-## Create a table of high cluster affinity peaks.
+## Create a table of high affinity cluster  peaks.
 It contains z-scores and peak details.
 Please note that for the benefit of biological flow, clusters have been relabeled as follows: 1 = "C 1", 2 = "C 2", 3 = "C 7", 4 = "C 4", 5 = "C 3", 6 = "C 6", 7 = "C 5", 8 = "C 8". This has also been indicated as `Cluster_Labels` accross the manuscript's source data and supplementary tables.
 .
 
-```{r high_affinity_peaks_z-s}
+```{r high_affinity_peaks_z_score}
 
-# Peak z-scores
+# Peaks z-scores
 
 peak.z.scores <- as.data.frame(s.exprSet@assayData$exprs) %>% 
   dplyr::mutate(., PeakID = rownames(.))
@@ -301,7 +300,7 @@ high.affinity.peaks.annotated <-
 
 ## Cluster dynamics.
 
-### High affinity cluster membership counts table.
+### High affinity peaks cluster counts.
 
 ```{r membership_counts}
 
@@ -335,7 +334,7 @@ knitr::kable(
   
 ```
 
-### Cluster dynamics plot.
+### Cluster dynamics of high affinity peaks.
 
 ```{r  cluster_dynamics_table}
 
@@ -404,7 +403,7 @@ cluster.dynamics.plot.values$Cluster_Label  <-
 
 ```
 
-Ribbon equals mean +/- SD (ggplot code hidden, see Rmd for details).
+Ribbons equal mean +/- SD (ggplot code hidden, see Rmd for details).
 
 ```{r cluster_dynamics_plot, fig.align="center", fig.height=9, fig.width=4.5, warning=FALSE, echo=FALSE}
 
@@ -527,7 +526,7 @@ ggplot(data = NULL, aes(stage, mean, group = 1)) +
 
 ```
 
-# Basic cluster Annotation (hg19).
+# Basic cluster annotation.
 
 ```{r basic_hg19_annotation, message=FALSE, warning=FALSE}
 
@@ -600,33 +599,29 @@ ggplot(data = basic.annotation.type.freqs, aes(x = Cluster_Label, y = rel.freq, 
 ```
 
 
-# Integration of chromatin accessibility and expression profiles.
+# Integration of chromatin accessibility and gene expression profiles.
+We show global gene expression profiles of genes associated with peaks in the clusters identified above.
+Also, we show profiles of selected genes associated with primed and naive reprogramming and somatic regulatory elements. 
 
-Profile of genes associated with primed and naive reprogramming and somatic regulatory elements. 
-We also show the global gene expression profiles of genes associated with peaks in the clusters identified above.
+Based on detailed cluster annotation (clusters annotated with Homer, see methods) and peaks asociated with gene transcription starting sites TTSs (see methods). In cases were a gene has more than one associated peak, the closest peak to the TSS is selected.
 
-Based on comprehensively annotated clusters (annotation with Homer, see methods) and peaks asociated with gene TSSs (see methods).
-
-For simplicity, objects with the annotated clusters and z-scores of expressed genes are loaded `data/bkATAC_annotated_clusters.Rdata` and `data/bkATAC_gene_expression_bulk_RNA_seq.Rdata`)
+For simplicity, objects with the annotated clusters and z-scores of expressed genes are loaded (`data/bkATAC_annotated_clusters.Rdata` and `data/bkATAC_gene_expression_bulk_RNA_seq.Rdata`).
 
 ## Load annotated clusters and process.
 ```{r annotated_clusters}
 # Load annotated cluster and subset peaks closest to TSSs
 
-load(file = "../data/bkATAC_annotated_clusters.Rdata") # Creates `annotated.clusters` object.
+load(file = "data/bkATAC_annotated_clusters.Rdata") # Creates `annotated.clusters` object.
 
 # Filter out peaks with no Ensembl ID associated.
 
 annotated.clusters.table <- ldply(annotated.clusters, rbind) %>% filter(!Nearest.Ensembl == "" ) %>% .[, -1] %>% dplyr::select(-c("Peak.Score", "Focus.Ratio.Region.Size"))
 
-# In cases were a genes has more than one associated peak, the closest peak to the TSS is selected.
+# In cases were a gene has more than one associated peak, the closest peak to the TSS is selected.
 annotated.clusters.table.nearest.TSS <-
   as.data.frame(annotated.clusters.table) %>%
   dplyr::group_by(Nearest.Ensembl) %>%
   dplyr::slice(which.min(abs(Distance.to.TSS)))
-
-# dplyr::filter(annotated.clusters.table, Nearest.Ensembl == "ENSG00000104213")
-# dplyr::filter(annotated.clusters.table.nearest.TSS, Nearest.Ensembl == "ENSG00000104213")
 
 # Add cluster information and chromatin accessiblity z-scores.  
 annotated.clusters.table.nearest.TSS <-
@@ -646,9 +641,9 @@ annotated.clusters.table.nearest.TSS <-
 ### Expression table.
 
 ```{r z_scores_rna_seq}
-base::load(file = "../data/bkATAC_gene_z_scores_bkRNA_seq.Rdata") # Load RNA-seq gene z-scores object name :`bkRNA.seq.z.scores`
+base::load(file = "data/bkATAC_gene_z_scores_bkRNA_seq.Rdata") # Load RNA-seq gene z-scores object name :`bkRNA.seq.z.scores`
 
-# Simplify TSS table to include cluster information and gene ENSEMBL ids.
+# Simplify TSS table to include only cluster information and gene ENSEMBL ids.
 
 table.nearest.TSS.cluster <- dplyr::select(annotated.clusters.table.nearest.TSS, c("Nearest.Ensembl", "Cluster", "Cluster_Label"))
 
@@ -698,7 +693,7 @@ bkRNA.seq.z.scores.annotated.melt$stage <-
   labels = c("D0", "D3", "D7", "D13", "D21", "P3", "P10")
   )
 
-# Labeller as above.  
+# Labeller defined as above.  
 cluster.labels.rna.seq <- list("C 1" = "C 1 (n = 1823)", 
                                  "C 2" = "C 2 (n = 1347)",
                                  "C 3" = "C 3 (n = 892)",
@@ -741,10 +736,11 @@ ggplot(
 
 ```
 
-## Selected Genes chromatin accessibility and expression profiles.
-The following genes were selected: SNAI1, TWIST2, ZEB2 ,BHLHE40, F11R, ZIC5, OCLN, NLRP7.
+## Selected genes chromatin accessibility and expression profiles.
+The following genes were selected: _SNAI1_, _TWIST2_, _ZEB2_ , _BHLHE40_, _F11R_, _ZIC5_, _OCLN_, _NLRP7_.
 
-### Chromatin accessiblity profile of selected genes.
+### Chromatin accessiblity profiles of selected genes.
+
 ```{r chromatin_accessibility_selected_genes}
 
 selected.genes <- data.frame(geneName = c("SNAI1", "TWIST2", "ZEB2", "BHLHE40", "F11R", "ZIC5", "OCLN", "NLRP7"))
@@ -837,7 +833,7 @@ plot.chromatin.accessibiliy.selected.genes <- ggplot(
 
 ```
 
-### Gene expression profile of selected genes.
+### Gene expression profiles of selected genes.
 
 ```{r gene_expression_profile, warning=FALSE}
 
@@ -887,15 +883,17 @@ plot.chromatin.accessibiliy.selected.genes | gene.expression.selected.genes.plot
 
 ```
 
-# Motif enrichment.
-## Top 25 most enriched motifs (based on p-value).
-For simplicity, in circumstances where motifs have identical symbols, the motif with the highest -(log10(p-value)) was kept; e.g, cases such as EWS:ERG-Fusion and ERG. 
+# Motif enrichment analysis.
+
+## Top 25 most enriched motifs accross clusters (based on p-value).
+For simplicity, objects with enriched motifs accross clusters are loaded (`data/bkATAC_motif_enrichment.Rdata` and `data/bkATAC_gata2.ap2.gamma.motif.enrichment.Rdata`)
+
+In circumstances where motifs have identical symbols, the motif with the highest -(log10(p-value)) was kept; e.g, cases such as EWS:ERG-Fusion and ERG. 
 
 ```{r motif_enrichment, fig.height=5, fig.width=12.5}
 
  # Load `bkATAC_motif_enrichment` object containing information of top 25 most enriched motifs accross clusters.
-base::load("../data/bkATAC_motif_enrichment.Rdata")
-bkATAC_motif_enrichment %>% head()
+base::load("data/bkATAC_motif_enrichment.Rdata")
 
 # Add cluster labels as above
 
@@ -965,7 +963,7 @@ ggplot(gg.Data, aes(motifHS, clustPlot, color = mLogP, size = target)) +
 ```{r tfap2c_motif_enrichment}
 # Load object with motif enrichment data of GATA2 and TFAP2C (AP2-gamma).
 
-base::load("../data/gata2.ap2.gamma.motif.enrichment.Rdata")
+base::load("data/bkATAC_gata2.ap2.gamma.motif.enrichment.Rdata")
 
 tfap2c.motif.enrichment.plot <-
   ggplot(data = gata2.ap2.gamma.motif.enrichment %>% dplyr::filter(motif.hs == "TFAP2C"),
