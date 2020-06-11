@@ -990,3 +990,9 @@ gata2.motif.enrichment.plot <-
 tfap2c.motif.enrichment.plot | gata2.motif.enrichment.plot
 ```
 
+# Session information
+### R 
+```{r session_info}
+sessionInfo()
+```
+
